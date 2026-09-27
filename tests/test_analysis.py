@@ -137,3 +137,43 @@ def test_auto_falls_back_without_wasmtime(monkeypatch):
     assert Analyzer("auto").engine_name == "python"
     with pytest.raises(RuntimeError):
         Analyzer("wasm")
+
+
+@pytest.mark.parametrize("engine", ["python", pytest.param("wasm", marks=needs_wasm)])
+def test_hashtags_keep_combining_marks(engine):
+    [r] = Analyzer(engine).analyze(["#नमस्ते #தமிழ் #ภาษาไทย #ﾃｽﾄ"])
+    assert r["hashtags"] == ["नमस्ते", "தமிழ்", "ภาษาไทย", "ﾃｽﾄ"]
+
+
+def test_unicode_table_is_sorted_and_disjoint():
+    from xscraper.analysis._unicode_tables import WORD_ENDS, WORD_STARTS
+
+    assert len(WORD_STARTS) == len(WORD_ENDS)
+    for i, (a, b) in enumerate(zip(WORD_STARTS, WORD_ENDS)):
+        assert 0x80 <= a <= b
+        if i:
+            assert a > WORD_ENDS[i - 1] + 1  # adjacent ranges would have been merged
+
+
+def test_rust_and_python_tables_match():
+    from xscraper.analysis._unicode_tables import WORD_ENDS, WORD_STARTS
+
+    rust = (Path(__file__).parents[1] / "wasm-core" / "src" / "unicode_tables.rs").read_text()
+    pairs = [(int(a, 16), int(b, 16)) for a, b in re.findall(r"\(0x([0-9A-F]+), 0x([0-9A-F]+)\)", rust)]
+    assert pairs == list(zip(WORD_STARTS, WORD_ENDS))
+
+
+@needs_wasm
+def test_wasm_matches_python_across_unicode():
+    # Both sides of every letter/number/mark range boundary, one text each.
+    # Code points this Python doesn't know yet are skipped: Rust's newer
+    # Unicode data can lowercase them, which is the one known difference.
+    import unicodedata
+
+    from xscraper.analysis._unicode_tables import WORD_ENDS, WORD_STARTS
+
+    points = sorted({p for a, b in zip(WORD_STARTS, WORD_ENDS) for p in (a - 1, a, b, b + 1)
+                     if 0x80 <= p <= 0x10FFFF and not 0xD800 <= p <= 0xDFFF
+                     and unicodedata.category(chr(p)) != "Cn"})
+    texts = [f"#a{chr(p)}b {chr(p)}love x{chr(p)}" for p in points]
+    assert WASM.analyze(texts) == Analyzer("python").analyze(texts)

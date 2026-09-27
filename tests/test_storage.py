@@ -44,3 +44,28 @@ def test_detect_format():
     assert detect_format("a.txt", "csv") == "csv"
     with pytest.raises(ValueError):
         detect_format("a.txt")
+
+
+def test_load_errors_are_friendly(tmp_path):
+    with pytest.raises(FileNotFoundError):
+        load(tmp_path / "missing.jsonl")
+    with pytest.raises(FileNotFoundError):
+        load(tmp_path / "missing.db")
+    assert not (tmp_path / "missing.db").exists()  # must not create an empty store
+
+    bad = tmp_path / "bad.jsonl"
+    bad.write_text('{"id": "1"}\n{"broken\n')
+    with pytest.raises(ValueError, match="line 1: not|line 2: invalid JSON|not an xscraper export"):
+        load(bad)
+    obj = tmp_path / "obj.json"
+    obj.write_text('{"a": 1}')
+    with pytest.raises(ValueError, match="JSON array"):
+        load(obj)
+
+
+def test_sqlite_not_a_database_and_nested_dir(tmp_path, tweets):
+    junk = tmp_path / "junk.db"
+    junk.write_text("hello")
+    with pytest.raises(ValueError, match="not an xscraper SQLite store"):
+        export(tweets, junk)
+    assert export(tweets, tmp_path / "a" / "b" / "store.db") == 3

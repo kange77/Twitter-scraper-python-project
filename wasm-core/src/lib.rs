@@ -19,7 +19,10 @@
 
 use std::collections::HashSet;
 
-pub const ABI_VERSION: u32 = 1;
+mod unicode_tables;
+pub use unicode_tables::{UNICODE_VERSION, WORD_RANGES};
+
+pub const ABI_VERSION: u32 = 2;
 
 // ---------------------------------------------------------------------------
 // Character classes
@@ -43,8 +46,26 @@ pub fn is_ws(c: char) -> bool {
     )
 }
 
+/// Letters, numbers, marks and `_`. Non-ASCII classes come from the generated
+/// table rather than `char::is_alphanumeric`, so they include combining marks
+/// (Devanagari vowel signs, Thai tone marks, ...) and match the Python engine
+/// exactly regardless of either toolchain's Unicode version.
 pub fn is_word(c: char) -> bool {
-    c == '_' || c.is_alphanumeric()
+    if c.is_ascii() {
+        return c == '_' || c.is_ascii_alphanumeric();
+    }
+    let cp = c as u32;
+    WORD_RANGES
+        .binary_search_by(|&(start, end)| {
+            if end < cp {
+                std::cmp::Ordering::Less
+            } else if start > cp {
+                std::cmp::Ordering::Greater
+            } else {
+                std::cmp::Ordering::Equal
+            }
+        })
+        .is_ok()
 }
 
 fn is_ascii_word(c: char) -> bool {
@@ -465,6 +486,12 @@ mod tests {
         assert_eq!(e.hashtags, vec!["Artemis", "1st"]);
         assert_eq!(e.cashtags, vec!["TSLA"]);
         assert_eq!(e.urls, vec!["https://x.com/a/b"]);
+    }
+
+    #[test]
+    fn hashtags_keep_combining_marks() {
+        let e = extract_entities("#नमस्ते #தமிழ் #ภาษาไทย");
+        assert_eq!(e.hashtags, vec!["नमस्ते", "தமிழ்", "ภาษาไทย"]);
     }
 
     #[test]

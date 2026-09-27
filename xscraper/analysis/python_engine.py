@@ -6,7 +6,9 @@ tested against. Every function mirrors its Rust counterpart step for step.
 from __future__ import annotations
 
 import math
+from bisect import bisect_right
 
+from ._unicode_tables import WORD_ENDS, WORD_STARTS
 from .lexicon import BOOSTERS, LEXICON, NEGATORS
 
 _WS = frozenset(
@@ -21,7 +23,12 @@ _MASK64 = (1 << 64) - 1
 
 
 def is_word(c: str) -> bool:
-    return c == "_" or c.isalnum()
+    """Letters, numbers, marks and ``_``, using the table shared with the Rust core."""
+    if c < "\x80":
+        return c == "_" or c.isalnum()
+    cp = ord(c)
+    i = bisect_right(WORD_STARTS, cp) - 1
+    return i >= 0 and cp <= WORD_ENDS[i]
 
 
 def _is_ascii_word(c: str) -> bool:

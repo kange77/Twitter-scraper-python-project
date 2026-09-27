@@ -133,12 +133,17 @@ def print_tweet(t: Tweet) -> None:
 
 def cmd_tweet(args) -> int:
     scraper = Scraper(_client(args), lang=args.lang, workers=args.workers)
-    results = scraper.tweets(args.tweets)
-    for ref, t in zip(args.tweets, results):
-        if t is None:
+    results = scraper.tweets(args.tweets, return_exceptions=True)
+    tweets = []
+    for ref, result in zip(args.tweets, results):
+        if isinstance(result, Tweet):
+            tweets.append(result)
+        elif result is None:
             print(f"not available (deleted, private or withheld): {ref}", file=sys.stderr)
-    _finish([t for t in results if t], args, args.analyze)
-    return 0 if any(results) else 1
+        else:
+            print(f"failed: {ref}: {result}", file=sys.stderr)
+    _finish(tweets, args, args.analyze)
+    return 0 if tweets else 1
 
 
 def cmd_thread(args) -> int:
@@ -204,8 +209,10 @@ def cmd_analyze(args) -> int:
             print(f"top {title}: {top}")
 
     ranked = sorted(tweets, key=lambda t: t.analysis["sentiment"])
-    for label, t in (("most negative", ranked[0]), ("most positive", ranked[-1])):
-        print(f"{label} ({t.analysis['sentiment']:+.2f}): {t.text[:140]!r}")
+    for label, t, show in (("most negative", ranked[0], ranked[0].analysis["sentiment"] < 0),
+                           ("most positive", ranked[-1], ranked[-1].analysis["sentiment"] > 0)):
+        if show:
+            print(f"{label} ({t.analysis['sentiment']:+.2f}): {t.text[:140]!r}")
 
     if args.output:
         if args.dedupe is not None:
@@ -256,7 +263,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                         format="%(levelname)s %(name)s: %(message)s")
     try:
         return COMMANDS[args.command](args)
-    except (HttpError, ParseError, ValueError, RuntimeError) as exc:
+    except (HttpError, ParseError, ValueError, RuntimeError, OSError) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 2
     except KeyboardInterrupt:

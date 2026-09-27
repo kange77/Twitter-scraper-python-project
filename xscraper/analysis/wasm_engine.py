@@ -14,7 +14,7 @@ import threading
 from pathlib import Path
 
 WASM_PATH = Path(__file__).with_name("xscraper_core.wasm")
-ABI_VERSION = 1
+ABI_VERSION = 2
 # Upper bound on bytes sent per call; keeps guest memory growth bounded.
 _BATCH_BYTES = 4 * 1024 * 1024
 _U64 = (1 << 64) - 1

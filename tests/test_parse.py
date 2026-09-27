@@ -52,3 +52,32 @@ def test_timeline_without_payload():
 def test_normalize_date_passthrough():
     assert normalize_date("not a date") == "not a date"
     assert normalize_date(None) is None
+
+
+@pytest.mark.parametrize("field,value", [
+    ("entities", "oops"), ("entities", {"urls": "x", "hashtags": [1, None, {"text": 5}]}),
+    ("user", ["not", "a", "dict"]), ("created_at", True), ("favorite_count", "12"),
+    ("mediaDetails", [None, {"video_info": {"variants": [{"url": 1}, "x"]}}]),
+    ("text", {"nested": 1}), ("parent", "123"), ("quoted_tweet", 7),
+])
+def test_unexpected_field_types_do_not_crash(tweet_results, field, value):
+    """X changes payloads without notice; wrong types degrade, never crash."""
+    data = dict(tweet_results["tweet"], **{field: value})
+    t = parse_tweet_result(data)
+    assert t.id == "1834231234567890123"
+
+
+def test_non_object_payload_is_parse_error():
+    for bad in ("str", 5):
+        with pytest.raises(ParseError):
+            parse_tweet_result(bad)
+
+
+def test_timeline_with_malformed_entries(timeline_html):
+    import json as _json
+    page = ('<script id="__NEXT_DATA__" type="application/json">'
+            + _json.dumps({"props": {"pageProps": {"timeline": {"entries": [
+                None, "x", {"type": "tweet", "content": "nope"},
+                {"type": "tweet", "content": {"tweet": {"id_str": "9", "full_text": "ok"}}}]}}}})
+            + "</script>")
+    assert [t.id for t in parse_timeline_page(page)] == ["9"]

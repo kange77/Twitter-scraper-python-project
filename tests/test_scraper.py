@@ -119,3 +119,31 @@ def test_thread_keeps_partial_chain_when_parent_fails(tweet_results):
     assert [t.id for t in s.thread("1834231234567890123")] == ["1834231234567890123"]
     with pytest.raises(HttpError):
         s.thread("500")
+
+
+def test_iter_tweets_streams_lazily_in_order(tweet_results):
+    s = Scraper(embed_client(tweet_results), workers=3)
+    pulled = []
+
+    def source():
+        for i in ["1834231234567890123", "999", "1834231000000000000"] * 5:
+            pulled.append(i)
+            yield i
+
+    results = s.iter_tweets(source(), window=4)
+    first = next(results)
+    assert first.id == "1834231234567890123"
+    assert len(pulled) <= 5  # only the window has been read ahead
+    rest = list(results)
+    assert [t and t.id for t in [first] + rest][:3] == ["1834231234567890123", None, "1834231000000000000"]
+    assert len(rest) == 14
+
+
+def test_user_timelines_reports_each_failure(timeline_html):
+    def handler(url, params):
+        if url.endswith("/nosuch"):
+            raise NotFound("404")
+        return FakeResponse(200, timeline_html)
+
+    got = Scraper(FakeClient(handler), workers=4).user_timelines(["NASA", "nosuch", "bad name"])
+    assert len(got[0]) == 3 and isinstance(got[1], NotFound) and isinstance(got[2], ValueError)

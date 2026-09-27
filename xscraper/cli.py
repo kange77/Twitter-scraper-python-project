@@ -2,7 +2,9 @@
 from __future__ import annotations
 
 import argparse
+import asyncio
 import logging
+import math
 import os
 import random
 import sys
@@ -16,8 +18,19 @@ from .analysis import ENGINES, Analyzer, near_duplicate_groups
 from .http import HttpClient, HttpError
 from .models import Tweet
 from .parse import ParseError
-from .scraper import Scraper
-from .storage import FORMATS, detect_format, export, load
+from .scraper import Scraper, parse_tweet_id
+from .storage import FORMATS, TweetWriter, export, load
+
+# Tweets are analysed and written in chunks of this size while a batch streams in.
+CHUNK = 500
+
+
+def _have_aiohttp() -> bool:
+    try:
+        import aiohttp  # noqa: F401
+    except ImportError:
+        return False
+    return True
 
 
 def _add_network_args(p: argparse.ArgumentParser) -> None:
@@ -25,7 +38,11 @@ def _add_network_args(p: argparse.ArgumentParser) -> None:
     g.add_argument("--rate", type=float, default=1.0, help="max requests per second (default 1)")
     g.add_argument("--retries", type=int, default=5, help="retries per request (default 5)")
     g.add_argument("--timeout", type=float, default=20.0, help="request timeout in seconds")
-    g.add_argument("--workers", type=int, default=4, help="concurrent fetches for many tweets")
+    g.add_argument("--workers", type=int, default=4,
+                   help="requests in flight at once for batches (default 4; the --rate cap still applies)")
+    g.add_argument("--http", choices=("auto", "async", "sync"), default="auto",
+                   help="HTTP engine: async needs aiohttp (pip install xscraper[fast]); "
+                        "auto uses it when installed")
     g.add_argument("--proxy", action="append", default=[], metavar="URL",
                    help="proxy URL; repeat to rotate through several")
     g.add_argument("--cookies", default=os.environ.get("XSCRAPER_COOKIES"),
@@ -54,7 +71,9 @@ def build_parser() -> argparse.ArgumentParser:
     sub = parser.add_subparsers(dest="command", required=True)
 
     p = sub.add_parser("tweet", help="fetch tweets by ID or URL")
-    p.add_argument("tweets", nargs="+", metavar="ID_OR_URL")
+    p.add_argument("tweets", nargs="*", metavar="ID_OR_URL")
+    p.add_argument("-i", "--input", dest="input_file", metavar="FILE",
+                   help="read IDs/URLs from FILE, one per line ('-' for stdin; # starts a comment)")
     _add_network_args(p)
     _add_output_args(p)
 
@@ -65,7 +84,9 @@ def build_parser() -> argparse.ArgumentParser:
     _add_output_args(p)
 
     p = sub.add_parser("user", help="fetch recent tweets from one or more profiles")
-    p.add_argument("users", nargs="+", metavar="SCREEN_NAME")
+    p.add_argument("users", nargs="*", metavar="SCREEN_NAME")
+    p.add_argument("-i", "--input", dest="input_file", metavar="FILE",
+                   help="read screen names from FILE, one per line ('-' for stdin)")
     p.add_argument("--no-retweets", action="store_true")
     p.add_argument("--limit", type=int, help="keep at most N tweets per user")
     _add_network_args(p)
@@ -81,9 +102,40 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _client_kwargs(args) -> dict:
+    # Burst no bigger than one second's worth of requests, so a large --workers
+    # doesn't open with a spike above --rate.
+    burst = max(1, min(args.workers, math.ceil(args.rate)))
+    return dict(rate=args.rate, burst=burst, retries=args.retries,
+                timeout=args.timeout, proxies=args.proxy, cookies=args.cookies)
+
+
 def _client(args) -> HttpClient:
-    return HttpClient(rate=args.rate, burst=max(1, args.workers), retries=args.retries,
-                      timeout=args.timeout, proxies=args.proxy, cookies=args.cookies)
+    return HttpClient(pool_size=args.workers, **_client_kwargs(args))
+
+
+def _use_async(args) -> bool:
+    if args.http == "sync":
+        return False
+    if _have_aiohttp():
+        return True
+    if args.http == "async":
+        raise RuntimeError("--http async needs aiohttp: pip install 'xscraper[fast]'")
+    return False
+
+
+def _refs(args, positional: list[str]) -> list[str]:
+    refs = list(positional)
+    if args.input_file:
+        f = sys.stdin if args.input_file == "-" else open(args.input_file, encoding="utf-8")
+        with f:
+            for line in f:
+                line = line.split("#", 1)[0].strip()
+                if line:
+                    refs.append(line)
+    if not refs:
+        raise ValueError("nothing to fetch: pass values on the command line or with --input")
+    return refs
 
 
 def _dedupe(tweets: list[Tweet], bits: int) -> list[Tweet]:
@@ -95,21 +147,64 @@ def _dedupe(tweets: list[Tweet], bits: int) -> list[Tweet]:
 
 
 def _finish(tweets: list[Tweet], args, analyze: bool) -> None:
-    if analyze or args.dedupe is not None:
-        analyzer = Analyzer(args.engine)
-        logging.getLogger("xscraper").info("analysis engine: %s", analyzer.engine_name)
-        analyzer.annotate(tweets)
-        if args.dedupe is not None:
-            tweets = _dedupe(tweets, args.dedupe)
-    if args.output:
-        n = export(tweets, args.output, args.format)
-        if detect_format(args.output, args.format) == "sqlite":
-            print(f"stored {n} new tweets in {args.output} ({len(tweets)} fetched)", file=sys.stderr)
-        else:
-            print(f"wrote {n} tweets to {args.output}", file=sys.stderr)
-    else:
+    sink = _Sink(args, analyze)
+    sink.add_many(tweets)
+    sink.close()
+
+
+class _Sink:
+    """Analyses and writes tweets in chunks as a batch streams in.
+
+    With --dedupe everything is buffered, since near-duplicates can be
+    anywhere in the batch.
+    """
+
+    def __init__(self, args, analyze: bool):
+        self.args = args
+        self.analyzer = None
+        if analyze or args.dedupe is not None:
+            self.analyzer = Analyzer(args.engine)
+            logging.getLogger("xscraper").info("analysis engine: %s", self.analyzer.engine_name)
+        self.buffer: list[Tweet] = []
+        self.writer = TweetWriter(args.output, args.format) if args.output else None
+        self.stream = args.dedupe is None
+        self.count = 0
+
+    def add(self, tweet: Tweet) -> None:
+        self.buffer.append(tweet)
+        if self.stream and len(self.buffer) >= CHUNK:
+            self._flush(self.buffer)
+            self.buffer = []
+
+    def add_many(self, tweets: list[Tweet]) -> None:
         for t in tweets:
-            print_tweet(t)
+            self.add(t)
+
+    def _flush(self, tweets: list[Tweet]) -> None:
+        if self.analyzer and tweets:
+            self.analyzer.annotate(tweets)
+        if not self.stream:
+            tweets = _dedupe(tweets, self.args.dedupe)
+        self.count += len(tweets)
+        if self.writer:
+            self.writer.write(tweets)
+        else:
+            for t in tweets:
+                print_tweet(t)
+
+    def close(self) -> None:
+        try:
+            self._flush(self.buffer)
+            self.buffer = []
+        finally:
+            if self.writer:
+                self.writer.close()
+        if self.writer:
+            if self.writer.fmt == "sqlite":
+                print(f"stored {self.writer.written} new tweets in {self.args.output} "
+                      f"({self.count} fetched)", file=sys.stderr)
+            else:
+                print(f"wrote {self.writer.written} tweets to {self.args.output}", file=sys.stderr)
 
 
 def _count(n: Optional[int]) -> str:
@@ -132,20 +227,42 @@ def print_tweet(t: Tweet) -> None:
 
 
 def cmd_tweet(args) -> int:
-    scraper = Scraper(_client(args), lang=args.lang, workers=args.workers)
-    results = scraper.tweets(args.tweets, return_exceptions=True)
-    tweets = []
-    failures = 0
-    for ref, result in zip(args.tweets, results):
+    refs = _refs(args, args.tweets)
+    ids = [parse_tweet_id(r) for r in refs]  # reject bad input before fetching anything
+    sink = _Sink(args, args.analyze)
+    got = failures = 0
+
+    def handle(ref: str, result) -> None:
+        nonlocal got, failures
         if isinstance(result, Tweet):
-            tweets.append(result)
+            sink.add(result)
+            got += 1
         elif result is None:
             print(f"not available (deleted, private or withheld): {ref}", file=sys.stderr)
         else:
             print(f"failed: {ref}: {result}", file=sys.stderr)
             failures += 1
-    _finish(tweets, args, args.analyze)
-    return 0 if tweets and not failures else 1
+
+    try:
+        if _use_async(args):
+            from .aio import AsyncHttpClient, AsyncScraper
+
+            async def run() -> None:
+                async with AsyncHttpClient(concurrency=args.workers, **_client_kwargs(args)) as client:
+                    results = AsyncScraper(client, lang=args.lang).iter_tweets(ids, return_exceptions=True)
+                    i = 0
+                    async for result in results:
+                        handle(refs[i], result)
+                        i += 1
+
+            asyncio.run(run())
+        else:
+            scraper = Scraper(_client(args), lang=args.lang, workers=args.workers)
+            for ref, result in zip(refs, scraper.iter_tweets(ids, return_exceptions=True)):
+                handle(ref, result)
+    finally:
+        sink.close()
+    return 0 if got and not failures else 1
 
 
 def cmd_thread(args) -> int:
@@ -155,14 +272,24 @@ def cmd_thread(args) -> int:
 
 
 def cmd_user(args) -> int:
-    scraper = Scraper(_client(args), lang=args.lang)
+    names = _refs(args, args.users)
+    include_retweets = not args.no_retweets
+    if _use_async(args):
+        from .aio import AsyncHttpClient, AsyncScraper
+
+        async def run() -> list:
+            async with AsyncHttpClient(concurrency=args.workers, **_client_kwargs(args)) as client:
+                return await AsyncScraper(client, lang=args.lang).user_timelines(names, include_retweets)
+
+        results = asyncio.run(run())
+    else:
+        results = Scraper(_client(args), lang=args.lang, workers=args.workers).user_timelines(
+            names, include_retweets)
     tweets: list[Tweet] = []
     failures = 0
-    for name in args.users:
-        try:
-            got = scraper.user_timeline(name, include_retweets=not args.no_retweets)
-        except (HttpError, ParseError) as exc:
-            print(f"@{name}: {exc}", file=sys.stderr)
+    for name, got in zip(names, results):
+        if isinstance(got, Exception):
+            print(f"@{name}: {got}", file=sys.stderr)
             failures += 1
             continue
         if not got:

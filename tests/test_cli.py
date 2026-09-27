@@ -1,9 +1,17 @@
 import json
 
+import pytest
+
 from tests.conftest import FakeResponse
 from xscraper import cli
 from xscraper.storage import export, load
 from xscraper.parse import parse_timeline_page
+
+
+@pytest.fixture(autouse=True)
+def sync_http(monkeypatch):
+    """These tests stub HttpClient.get, so keep the CLI on the sync engine."""
+    monkeypatch.setattr(cli, "_have_aiohttp", lambda: False)
 
 
 def test_analyze_command(tmp_path, timeline_html, capsys):

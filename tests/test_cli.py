@@ -53,10 +53,25 @@ def test_tweet_batch_survives_one_failure(monkeypatch, tweet_results, capsys):
         return FakeResponse(200, json.dumps(tweet_results["tweet"]))
 
     monkeypatch.setattr(cli.HttpClient, "get", fake_get)
-    assert cli.main(["tweet", "1834231234567890123", "500"]) == 0
+    # The tweets that worked are still printed, but the exit code reports the failure.
+    assert cli.main(["tweet", "1834231234567890123", "500"]) == 1
     captured = capsys.readouterr()
     assert "failed: 500: giving up" in captured.err
     assert "@NASA" in captured.out
+
+
+def test_user_batch_exit_code_reports_one_failure(monkeypatch, timeline_html, capsys):
+    from xscraper.http import NotFound
+
+    def fake_get(self, url, params=None, headers=None):
+        if url.endswith("/nosuchuser"):
+            raise NotFound("404 Not Found", 404)
+        return FakeResponse(200, timeline_html)
+
+    monkeypatch.setattr(cli.HttpClient, "get", fake_get)
+    assert cli.main(["user", "NASA", "nosuchuser"]) == 1
+    captured = capsys.readouterr()
+    assert "@nosuchuser: 404" in captured.err and "@NASA" in captured.out
 
 
 def test_analyze_missing_file(tmp_path, capsys):

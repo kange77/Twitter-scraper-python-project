@@ -135,6 +135,7 @@ def cmd_tweet(args) -> int:
     scraper = Scraper(_client(args), lang=args.lang, workers=args.workers)
     results = scraper.tweets(args.tweets, return_exceptions=True)
     tweets = []
+    failures = 0
     for ref, result in zip(args.tweets, results):
         if isinstance(result, Tweet):
             tweets.append(result)
@@ -142,8 +143,9 @@ def cmd_tweet(args) -> int:
             print(f"not available (deleted, private or withheld): {ref}", file=sys.stderr)
         else:
             print(f"failed: {ref}: {result}", file=sys.stderr)
+            failures += 1
     _finish(tweets, args, args.analyze)
-    return 0 if tweets else 1
+    return 0 if tweets and not failures else 1
 
 
 def cmd_thread(args) -> int:
@@ -168,7 +170,7 @@ def cmd_user(args) -> int:
                   "try again later or pass --cookies)", file=sys.stderr)
         tweets.extend(got[:args.limit] if args.limit else got)
     _finish(tweets, args, args.analyze)
-    return 1 if failures == len(args.users) else 0
+    return 1 if failures else 0
 
 
 def _domain(url: str) -> str:

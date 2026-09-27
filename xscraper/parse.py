@@ -21,6 +21,9 @@ from .models import Media, Tweet, User
 _NEXT_DATA = re.compile(
     r'<script[^>]*id="__NEXT_DATA__"[^>]*>(?P<json>.*?)</script>', re.DOTALL
 )
+_REPLY_PREFIX = re.compile(r"^(?:\s*@\w{1,15})+\s*$")
+# Payloads for tweets that exist but can't be shown (deleted, protected, suspended).
+_UNAVAILABLE_TYPES = frozenset({"TweetTombstone", "TweetUnavailable"})
 
 
 class ParseError(ValueError):
@@ -113,6 +116,12 @@ def _entity_values(entities: dict, kind: str, field: str) -> list[str]:
 def _expand_text(t: dict) -> str:
     """Tweet text with t.co links expanded and the trailing media link removed."""
     text = _s(t.get("full_text")) or _s(t.get("text")) or ""
+    # Replies start with the @mentions of the people being replied to; X hides
+    # them by starting display_text_range after them.
+    start = next(iter(_l(t.get("display_text_range"))), None)
+    start = _int(start) if start is not None else None
+    if start and 0 < start <= len(text) and _REPLY_PREFIX.match(text[:start]):
+        text = text[start:]
     entities = _d(t.get("entities"))
     for u in _l(entities.get("urls")):
         short, full = _s(_d(u).get("url")), _s(_d(u).get("expanded_url"))
@@ -132,9 +141,24 @@ def parse_tweet(t: Any, source: str = "") -> Tweet:
     if not tweet_id:
         raise ParseError("not a tweet object")
     entities = _d(t.get("entities"))
+    text = _expand_text(t)
+    hashtags = _entity_values(entities, "hashtags", "text")
+    mentions = _entity_values(entities, "user_mentions", "screen_name")
+    urls = _entity_values(entities, "urls", "expanded_url")
+    retweeted = _d(t.get("retweeted_status"))
+    if _s(retweeted.get("id_str")) and (_s(retweeted.get("full_text")) or _s(retweeted.get("text"))):
+        # A retweet's own text is "RT @user: " plus the original cut to 140
+        # characters, so take the text and entities from the original.
+        rt_entities = _d(retweeted.get("entities"))
+        author = _s(_d(retweeted.get("user")).get("screen_name"))
+        text = f"RT @{author}: {_expand_text(retweeted)}" if author else _expand_text(retweeted)
+        hashtags = _entity_values(rt_entities, "hashtags", "text")
+        orig_mentions = _entity_values(rt_entities, "user_mentions", "screen_name")
+        mentions = ([author] if author and author not in orig_mentions else []) + orig_mentions
+        urls = _entity_values(rt_entities, "urls", "expanded_url")
     return Tweet(
         id=tweet_id,
-        text=_expand_text(t),
+        text=text,
         created_at=normalize_date(t.get("created_at")),
         user=_user(_d(t.get("user"))),
         lang=_s(t.get("lang")),
@@ -142,9 +166,9 @@ def parse_tweet(t: Any, source: str = "") -> Tweet:
         retweet_count=_int(t.get("retweet_count")),
         reply_count=_int(t.get("reply_count", t.get("conversation_count"))),
         quote_count=_int(t.get("quote_count")),
-        hashtags=_entity_values(entities, "hashtags", "text"),
-        mentions=_entity_values(entities, "user_mentions", "screen_name"),
-        urls=_entity_values(entities, "urls", "expanded_url"),
+        hashtags=hashtags,
+        mentions=mentions,
+        urls=urls,
         media=_media(t),
         in_reply_to_id=_s(t.get("in_reply_to_status_id_str")) or _s(_d(t.get("parent")).get("id_str")),
         quoted_tweet_id=_s(t.get("quoted_status_id_str")) or _s(_d(t.get("quoted_tweet")).get("id_str")),
@@ -154,12 +178,12 @@ def parse_tweet(t: Any, source: str = "") -> Tweet:
 
 
 def parse_tweet_result(data: Any) -> Optional[Tweet]:
-    """Parse the embed endpoint's JSON. Returns None for deleted/withheld tweets."""
+    """Parse the embed endpoint's JSON. Returns None for deleted/withheld/protected tweets."""
     if not data:
         return None
     if not isinstance(data, dict):
         raise ParseError(f"unexpected tweet-result payload: {type(data).__name__}")
-    if data.get("__typename") == "TweetTombstone" or "tombstone" in data:
+    if data.get("__typename") in _UNAVAILABLE_TYPES or "tombstone" in data:
         return None
     return parse_tweet(data, source="syndication-tweet")
 
@@ -175,7 +199,11 @@ def extract_next_data(page: str) -> dict:
 
 
 def parse_timeline_page(page: str) -> list[Tweet]:
-    """Parse the profile-timeline widget HTML into tweets (newest first)."""
+    """Parse the profile-timeline widget HTML into tweets (newest first).
+
+    The widget lists a pinned tweet first whatever its age, so entries are
+    re-sorted by ID, which X assigns in time order.
+    """
     data = extract_next_data(page)
     timeline = _d(_d(_d(data).get("props")).get("pageProps")).get("timeline")
     tweets = []
@@ -187,4 +215,5 @@ def parse_timeline_page(page: str) -> list[Tweet]:
             tweets.append(parse_tweet(raw, source="syndication-timeline"))
         except ParseError:
             continue
+    tweets.sort(key=lambda t: int(t.id) if t.id.isdigit() else 0, reverse=True)
     return tweets

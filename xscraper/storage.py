@@ -71,32 +71,55 @@ def export(tweets: Iterable[Tweet], path: str | Path, fmt: Optional[str] = None)
 def load(path: str | Path, fmt: Optional[str] = None) -> list[Tweet]:
     """Read tweets previously written as JSON, JSON Lines or SQLite."""
     fmt = detect_format(path, fmt)
+    if fmt == "csv":
+        raise ValueError("CSV is export-only; load from JSON, JSON Lines or SQLite")
+    if not Path(path).is_file():
+        raise FileNotFoundError(f"no such file: {path}")
     if fmt == "sqlite":
         with TweetStore(path) as store:
             return list(store)
-    if fmt == "csv":
-        raise ValueError("CSV is export-only; load from JSON, JSON Lines or SQLite")
     text = Path(path).read_text(encoding="utf-8")
-    rows = json.loads(text) if fmt == "json" else [json.loads(l) for l in text.splitlines() if l.strip()]
-    return [Tweet.from_dict(r) for r in rows]
+    try:
+        if fmt == "json":
+            rows = json.loads(text)
+        else:
+            rows = []
+            for lineno, line in enumerate(text.splitlines(), 1):
+                if line.strip():
+                    try:
+                        rows.append(json.loads(line))
+                    except json.JSONDecodeError as exc:
+                        raise ValueError(f"{path} line {lineno}: invalid JSON ({exc})") from exc
+        if not isinstance(rows, list):
+            raise ValueError(f"{path}: expected a JSON array of tweets")
+        return [Tweet.from_dict(r) for r in rows]
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"{path}: invalid JSON ({exc})") from exc
+    except (KeyError, TypeError) as exc:
+        raise ValueError(f"{path}: not an xscraper export ({type(exc).__name__}: {exc})") from exc
 
 
 class TweetStore:
     """SQLite store keyed by tweet ID, so repeated scrapes only add what's new."""
 
     def __init__(self, path: str | Path):
+        Path(path).parent.mkdir(parents=True, exist_ok=True)
         self.conn = sqlite3.connect(str(path))
-        self.conn.execute(
-            """CREATE TABLE IF NOT EXISTS tweets (
-                   id TEXT PRIMARY KEY,
-                   screen_name TEXT,
-                   created_at TEXT,
-                   text TEXT,
-                   data TEXT NOT NULL,
-                   first_seen TEXT NOT NULL,
-                   last_seen TEXT NOT NULL)"""
-        )
-        self.conn.execute("CREATE INDEX IF NOT EXISTS tweets_user ON tweets(screen_name, created_at)")
+        try:
+            self.conn.execute(
+                """CREATE TABLE IF NOT EXISTS tweets (
+                       id TEXT PRIMARY KEY,
+                       screen_name TEXT,
+                       created_at TEXT,
+                       text TEXT,
+                       data TEXT NOT NULL,
+                       first_seen TEXT NOT NULL,
+                       last_seen TEXT NOT NULL)"""
+            )
+            self.conn.execute("CREATE INDEX IF NOT EXISTS tweets_user ON tweets(screen_name, created_at)")
+        except sqlite3.DatabaseError as exc:
+            self.conn.close()
+            raise ValueError(f"{path} is not an xscraper SQLite store ({exc})") from exc
 
     def __enter__(self) -> "TweetStore":
         return self

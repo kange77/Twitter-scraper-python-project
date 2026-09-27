@@ -42,3 +42,23 @@ def test_user_command_writes_store(monkeypatch, timeline_html, tmp_path, capsys)
 def test_bad_input_exit_code(capsys):
     assert cli.main(["tweet", "not-an-id"]) == 2
     assert "error:" in capsys.readouterr().err
+
+
+def test_tweet_batch_survives_one_failure(monkeypatch, tweet_results, capsys):
+    from xscraper.http import HttpError
+
+    def fake_get(self, url, params=None, headers=None):
+        if params["id"] == "500":
+            raise HttpError("giving up after 6 attempts (HTTP 503)", 503)
+        return FakeResponse(200, json.dumps(tweet_results["tweet"]))
+
+    monkeypatch.setattr(cli.HttpClient, "get", fake_get)
+    assert cli.main(["tweet", "1834231234567890123", "500"]) == 0
+    captured = capsys.readouterr()
+    assert "failed: 500: giving up" in captured.err
+    assert "@NASA" in captured.out
+
+
+def test_analyze_missing_file(tmp_path, capsys):
+    assert cli.main(["analyze", str(tmp_path / "nope.jsonl")]) == 2
+    assert "no such file" in capsys.readouterr().err

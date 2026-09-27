@@ -147,5 +147,7 @@ class HttpClient:
             delay = self._delay(attempt, resp)
             log.warning("%s on %s; retry %d/%d in %.1fs", last_error, url, attempt + 1, self.retries, delay)
             self._sleep(delay)
-        raise HttpError(f"giving up on {url} after {self.retries + 1} attempts ({last_error})",
+        attempts = self.retries + 1
+        raise HttpError(f"giving up on {url} after {attempts} attempt{'s' if attempts > 1 else ''} "
+                        f"({last_error})",
                         resp.status_code if resp is not None else None)

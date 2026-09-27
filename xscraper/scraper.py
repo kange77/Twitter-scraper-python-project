@@ -13,9 +13,9 @@ import re
 from concurrent.futures import ThreadPoolExecutor
 from typing import Iterable, Optional
 
-from .http import HttpClient, NotFound
+from .http import HttpClient, HttpError, NotFound
 from .models import Tweet
-from .parse import parse_timeline_page, parse_tweet_result
+from .parse import ParseError, parse_timeline_page, parse_tweet_result
 from .token import syndication_token
 
 log = logging.getLogger(__name__)
@@ -67,18 +67,34 @@ class Scraper:
             return None
         if not resp.content.strip():
             return None
-        return parse_tweet_result(resp.json())
+        try:
+            data = resp.json()
+        except ValueError as exc:
+            raise ParseError(f"tweet {tweet_id}: response was not JSON "
+                             "(request blocked or endpoint changed)") from exc
+        return parse_tweet_result(data)
 
-    def tweets(self, tweets: Iterable[str | int]) -> list[Optional[Tweet]]:
+    def tweets(self, tweets: Iterable[str | int], return_exceptions: bool = False) -> list:
         """Fetch many tweets concurrently (still within the client's rate limit).
 
-        Results are in input order; missing tweets are None.
+        Results are in input order; missing tweets are None. With
+        ``return_exceptions=True`` a tweet that fails to fetch or parse gets its
+        exception in the result list instead of aborting the whole batch.
         """
         ids = [parse_tweet_id(t) for t in tweets]
+
+        def fetch(tweet_id: str):
+            try:
+                return self.tweet(tweet_id)
+            except (HttpError, ParseError) as exc:
+                if not return_exceptions:
+                    raise
+                return exc
+
         if len(ids) <= 1 or self.workers == 1:
-            return [self.tweet(i) for i in ids]
+            return [fetch(i) for i in ids]
         with ThreadPoolExecutor(max_workers=self.workers) as pool:
-            return list(pool.map(self.tweet, ids))
+            return list(pool.map(fetch, ids))
 
     def thread(self, tweet: str | int, max_depth: int = 50) -> list[Tweet]:
         """The reply chain leading up to (and including) a tweet, oldest first."""
@@ -87,7 +103,14 @@ class Scraper:
         next_id: Optional[str] = parse_tweet_id(tweet)
         while next_id and next_id not in seen and len(chain) < max_depth:
             seen.add(next_id)
-            current = self.tweet(next_id)
+            try:
+                current = self.tweet(next_id)
+            except (HttpError, ParseError) as exc:
+                if not chain:
+                    raise
+                # Keep what we have rather than losing the whole thread.
+                log.warning("stopping thread at %s: %s", next_id, exc)
+                break
             if current is None:
                 break
             chain.append(current)

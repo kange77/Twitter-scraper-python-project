@@ -27,15 +27,34 @@ class ParseError(ValueError):
     pass
 
 
+def _d(value: Any) -> dict:
+    """``value`` if it's a dict, else {}; payload fields can change type without notice."""
+    return value if isinstance(value, dict) else {}
+
+
+def _l(value: Any) -> list:
+    return value if isinstance(value, list) else []
+
+
+def _s(value: Any) -> Optional[str]:
+    if isinstance(value, str):
+        return value
+    if isinstance(value, int) and not isinstance(value, bool):
+        return str(value)
+    return None
+
+
 def _int(value: Any) -> Optional[int]:
+    if isinstance(value, bool):
+        return None
     try:
         return int(value)
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
         return None
 
 
-def normalize_date(value: Optional[str]) -> Optional[str]:
-    if not value:
+def normalize_date(value: Any) -> Optional[str]:
+    if not value or not isinstance(value, str):
         return None
     for fmt in ("%a %b %d %H:%M:%S %z %Y", "%Y-%m-%dT%H:%M:%S.%f%z", "%Y-%m-%dT%H:%M:%S%z"):
         try:
@@ -48,36 +67,38 @@ def normalize_date(value: Optional[str]) -> Optional[str]:
 
 def _user(u: dict) -> User:
     return User(
-        id=str(u.get("id_str") or u.get("id") or ""),
-        screen_name=u.get("screen_name", ""),
-        name=u.get("name", ""),
+        id=_s(u.get("id_str")) or _s(u.get("id")) or "",
+        screen_name=_s(u.get("screen_name")) or "",
+        name=_s(u.get("name")) or "",
         verified=bool(u.get("verified") or u.get("is_blue_verified")),
-        profile_image_url=u.get("profile_image_url_https"),
+        profile_image_url=_s(u.get("profile_image_url_https")),
         followers_count=_int(u.get("followers_count")),
     )
 
 
 def _best_video(media: dict) -> Optional[str]:
-    variants = (media.get("video_info") or {}).get("variants") or []
-    mp4 = [v for v in variants if v.get("content_type") == "video/mp4" and v.get("url")]
+    variants = _l(_d(media.get("video_info")).get("variants"))
+    mp4 = [v for v in variants
+           if isinstance(v, dict) and v.get("content_type") == "video/mp4" and _s(v.get("url"))]
     if not mp4:
         return None
-    return max(mp4, key=lambda v: v.get("bitrate") or 0)["url"]
+    return max(mp4, key=lambda v: _int(v.get("bitrate")) or 0)["url"]
 
 
 def _media(t: dict) -> list[Media]:
     items = (
-        t.get("mediaDetails")
-        or (t.get("extended_entities") or {}).get("media")
-        or (t.get("entities") or {}).get("media")
-        or []
+        _l(t.get("mediaDetails"))
+        or _l(_d(t.get("extended_entities")).get("media"))
+        or _l(_d(t.get("entities")).get("media"))
     )
     out = []
     for m in items:
-        info = m.get("original_info") or {}
+        if not isinstance(m, dict):
+            continue
+        info = _d(m.get("original_info"))
         out.append(Media(
-            type=m.get("type", "photo"),
-            url=m.get("media_url_https") or m.get("media_url") or "",
+            type=_s(m.get("type")) or "photo",
+            url=_s(m.get("media_url_https")) or _s(m.get("media_url")) or "",
             width=_int(info.get("width")),
             height=_int(info.get("height")),
             video_url=_best_video(m),
@@ -85,51 +106,60 @@ def _media(t: dict) -> list[Media]:
     return out
 
 
+def _entity_values(entities: dict, kind: str, field: str) -> list[str]:
+    return [v for e in _l(entities.get(kind)) if isinstance(e, dict) and (v := _s(e.get(field)))]
+
+
 def _expand_text(t: dict) -> str:
     """Tweet text with t.co links expanded and the trailing media link removed."""
-    text = t.get("full_text") or t.get("text") or ""
-    entities = t.get("entities") or {}
-    for u in entities.get("urls") or []:
-        if u.get("url") and u.get("expanded_url"):
-            text = text.replace(u["url"], u["expanded_url"])
-    media_entities = (t.get("extended_entities") or {}).get("media") or entities.get("media") or []
+    text = _s(t.get("full_text")) or _s(t.get("text")) or ""
+    entities = _d(t.get("entities"))
+    for u in _l(entities.get("urls")):
+        short, full = _s(_d(u).get("url")), _s(_d(u).get("expanded_url"))
+        if short and full:
+            text = text.replace(short, full)
+    media_entities = _l(_d(t.get("extended_entities")).get("media")) or _l(entities.get("media"))
     for m in media_entities:
-        if m.get("url"):
-            text = text.replace(m["url"], "")
+        short = _s(_d(m).get("url"))
+        if short:
+            text = text.replace(short, "")
     return html.unescape(text).strip()
 
 
-def parse_tweet(t: dict, source: str = "") -> Tweet:
+def parse_tweet(t: Any, source: str = "") -> Tweet:
     """Parse one tweet object from either syndication payload shape."""
-    if not isinstance(t, dict) or not (t.get("id_str") or t.get("id")):
+    tweet_id = (_s(t.get("id_str")) or _s(t.get("id"))) if isinstance(t, dict) else None
+    if not tweet_id:
         raise ParseError("not a tweet object")
-    entities = t.get("entities") or {}
-    retweeted = t.get("retweeted_status")
-    quoted_id = t.get("quoted_status_id_str") or (t.get("quoted_tweet") or {}).get("id_str")
+    entities = _d(t.get("entities"))
     return Tweet(
-        id=str(t.get("id_str") or t["id"]),
+        id=tweet_id,
         text=_expand_text(t),
         created_at=normalize_date(t.get("created_at")),
-        user=_user(t.get("user") or {}),
-        lang=t.get("lang"),
+        user=_user(_d(t.get("user"))),
+        lang=_s(t.get("lang")),
         like_count=_int(t.get("favorite_count")),
         retweet_count=_int(t.get("retweet_count")),
         reply_count=_int(t.get("reply_count", t.get("conversation_count"))),
         quote_count=_int(t.get("quote_count")),
-        hashtags=[h["text"] for h in entities.get("hashtags") or [] if h.get("text")],
-        mentions=[m["screen_name"] for m in entities.get("user_mentions") or [] if m.get("screen_name")],
-        urls=[u["expanded_url"] for u in entities.get("urls") or [] if u.get("expanded_url")],
+        hashtags=_entity_values(entities, "hashtags", "text"),
+        mentions=_entity_values(entities, "user_mentions", "screen_name"),
+        urls=_entity_values(entities, "urls", "expanded_url"),
         media=_media(t),
-        in_reply_to_id=t.get("in_reply_to_status_id_str") or (t.get("parent") or {}).get("id_str"),
-        quoted_tweet_id=quoted_id,
-        retweeted_tweet_id=(retweeted or {}).get("id_str"),
+        in_reply_to_id=_s(t.get("in_reply_to_status_id_str")) or _s(_d(t.get("parent")).get("id_str")),
+        quoted_tweet_id=_s(t.get("quoted_status_id_str")) or _s(_d(t.get("quoted_tweet")).get("id_str")),
+        retweeted_tweet_id=_s(_d(t.get("retweeted_status")).get("id_str")),
         source=source,
     )
 
 
-def parse_tweet_result(data: dict) -> Optional[Tweet]:
+def parse_tweet_result(data: Any) -> Optional[Tweet]:
     """Parse the embed endpoint's JSON. Returns None for deleted/withheld tweets."""
-    if not data or data.get("__typename") == "TweetTombstone" or "tombstone" in data:
+    if not data:
+        return None
+    if not isinstance(data, dict):
+        raise ParseError(f"unexpected tweet-result payload: {type(data).__name__}")
+    if data.get("__typename") == "TweetTombstone" or "tombstone" in data:
         return None
     return parse_tweet(data, source="syndication-tweet")
 
@@ -147,12 +177,12 @@ def extract_next_data(page: str) -> dict:
 def parse_timeline_page(page: str) -> list[Tweet]:
     """Parse the profile-timeline widget HTML into tweets (newest first)."""
     data = extract_next_data(page)
-    timeline = ((data.get("props") or {}).get("pageProps") or {}).get("timeline") or {}
+    timeline = _d(_d(_d(data).get("props")).get("pageProps")).get("timeline")
     tweets = []
-    for entry in timeline.get("entries") or []:
-        if entry.get("type") != "tweet":
+    for entry in _l(_d(timeline).get("entries")):
+        if _d(entry).get("type") != "tweet":
             continue
-        raw = (entry.get("content") or {}).get("tweet")
+        raw = _d(entry.get("content")).get("tweet")
         try:
             tweets.append(parse_tweet(raw, source="syndication-timeline"))
         except ParseError:

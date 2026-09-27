@@ -72,3 +72,50 @@ def test_user_timeline(timeline_html):
     assert len(s.user_timeline("@NASA")) == 3
     assert all(not t.is_retweet for t in s.user_timeline("NASA", include_retweets=False))
     assert client.calls[0][0].endswith("/screen-name/NASA")
+
+
+def failing_client(tweet_results):
+    from xscraper.http import HttpError
+
+    ok = tweet_results["parent"]
+
+    def handler(url, params):
+        if params["id"] == "500":
+            raise HttpError("giving up", 503)
+        if params["id"] == "777":
+            return FakeResponse(200, "<html>blocked</html>")
+        if params["id"] == ok["id_str"]:
+            return FakeResponse(200, json.dumps(ok))
+        return FakeResponse(200, json.dumps(dict(tweet_results["tweet"], in_reply_to_status_id_str="500",
+                                                 parent=None)))
+
+    return FakeClient(handler)
+
+
+def test_non_json_response_is_parse_error(tweet_results):
+    from xscraper.parse import ParseError
+
+    with pytest.raises(ParseError, match="not JSON"):
+        Scraper(failing_client(tweet_results)).tweet("777")
+
+
+def test_tweets_return_exceptions_keeps_the_rest(tweet_results):
+    from xscraper.http import HttpError
+    from xscraper.parse import ParseError
+
+    s = Scraper(failing_client(tweet_results), workers=3)
+    ok = tweet_results["parent"]["id_str"]
+    with pytest.raises(HttpError):
+        s.tweets([ok, "500"])
+    got = s.tweets([ok, "500", "777"], return_exceptions=True)
+    assert got[0].id == ok
+    assert isinstance(got[1], HttpError) and isinstance(got[2], ParseError)
+
+
+def test_thread_keeps_partial_chain_when_parent_fails(tweet_results):
+    from xscraper.http import HttpError
+
+    s = Scraper(failing_client(tweet_results))
+    assert [t.id for t in s.thread("1834231234567890123")] == ["1834231234567890123"]
+    with pytest.raises(HttpError):
+        s.thread("500")

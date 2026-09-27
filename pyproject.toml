@@ -1,0 +1,31 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "xscraper"
+dynamic = ["version"]
+description = "Public X/Twitter scraper with a Rust/WebAssembly analytics core"
+readme = "README.md"
+license = { text = "MIT" }
+requires-python = ">=3.10"
+dependencies = ["requests>=2.28"]
+
+[project.optional-dependencies]
+wasm = ["wasmtime>=20"]
+dev = ["wasmtime>=20", "pytest>=7"]
+
+[project.scripts]
+xscraper = "xscraper.cli:main"
+
+[tool.setuptools.dynamic]
+version = { attr = "xscraper.__version__" }
+
+[tool.setuptools.packages.find]
+include = ["xscraper*"]
+
+[tool.setuptools.package-data]
+"xscraper.analysis" = ["*.wasm"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

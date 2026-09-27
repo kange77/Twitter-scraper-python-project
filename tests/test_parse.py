@@ -31,6 +31,53 @@ def test_tombstone_is_none(tweet_results):
     assert parse_tweet_result({}) is None
 
 
+def test_unavailable_tweet_is_none():
+    assert parse_tweet_result({"__typename": "TweetUnavailable", "reason": "Protected"}) is None
+
+
+def test_reply_mentions_hidden_by_display_text_range(tweet_results):
+    reply = dict(tweet_results["tweet"], text="@NASA @alice Go Artemis! 🚀", display_text_range=[13, 26],
+                 entities={"user_mentions": [{"screen_name": "NASA"}, {"screen_name": "alice"}]})
+    t = parse_tweet_result(reply)
+    assert t.text == "Go Artemis! 🚀"
+    assert t.mentions == ["NASA", "alice"]  # still recorded as entities
+
+
+def test_display_text_range_only_strips_mentions(tweet_results):
+    # A range that would cut real words (e.g. a quote tweet's leading text) is ignored.
+    t = parse_tweet_result(dict(tweet_results["parent"], text="Hello world", display_text_range=[6, 11]))
+    assert t.text == "Hello world"
+
+
+def test_retweet_uses_original_text():
+    original = ("Webb just captured the most detailed image yet of the Pillars of Creation, showing newly "
+                "formed stars glowing inside clouds of gas and dust. More: https://t.co/w")
+    rt = {"id_str": "2", "full_text": "RT @NASAWebb: " + original[:125] + "…",
+          "user": {"screen_name": "NASA"},
+          "entities": {"user_mentions": [{"screen_name": "NASAWebb"}]},
+          "retweeted_status": {"id_str": "1", "full_text": original, "user": {"screen_name": "NASAWebb"},
+                               "entities": {"hashtags": [{"text": "JWST"}],
+                                            "urls": [{"url": "https://t.co/w", "expanded_url": "https://webb.nasa.gov"}]}}}
+    [t] = parse_timeline_page(_page([rt]))
+    assert t.is_retweet and t.retweeted_tweet_id == "1"
+    assert t.text == "RT @NASAWebb: " + original.replace("https://t.co/w", "https://webb.nasa.gov")
+    assert t.hashtags == ["JWST"] and t.urls == ["https://webb.nasa.gov"]
+    assert t.mentions == ["NASAWebb"]
+
+
+def test_timeline_sorted_newest_first_despite_pinned_tweet():
+    pinned = {"id_str": "100", "full_text": "pinned, old"}
+    newer = [{"id_str": "300", "full_text": "newest"}, {"id_str": "200", "full_text": "older"}]
+    assert [t.id for t in parse_timeline_page(_page([pinned, *newer]))] == ["300", "200", "100"]
+
+
+def _page(tweets):
+    import json as _json
+    entries = [{"type": "tweet", "content": {"tweet": t}} for t in tweets]
+    return ('<script id="__NEXT_DATA__" type="application/json">'
+            + _json.dumps({"props": {"pageProps": {"timeline": {"entries": entries}}}}) + "</script>")
+
+
 def test_timeline_page(timeline_html):
     tweets = parse_timeline_page(timeline_html)
     assert [t.id[-1] for t in tweets] == ["3", "2", "1"]  # notice entry skipped
@@ -59,6 +106,9 @@ def test_normalize_date_passthrough():
     ("user", ["not", "a", "dict"]), ("created_at", True), ("favorite_count", "12"),
     ("mediaDetails", [None, {"video_info": {"variants": [{"url": 1}, "x"]}}]),
     ("text", {"nested": 1}), ("parent", "123"), ("quoted_tweet", 7),
+    ("display_text_range", "0,5"), ("display_text_range", [True, None]),
+    ("display_text_range", [9999]),
+    ("retweeted_status", {"text": 5, "user": "x"}), ("retweeted_status", {"full_text": "hi", "entities": []}),
 ])
 def test_unexpected_field_types_do_not_crash(tweet_results, field, value):
     """X changes payloads without notice; wrong types degrade, never crash."""

@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import contextlib
 import logging
 import math
 import os
@@ -18,7 +19,9 @@ from .analysis import ENGINES, Analyzer, near_duplicate_groups
 from .http import HttpClient, HttpError
 from .models import Tweet
 from .parse import ParseError
-from .scraper import Scraper, parse_tweet_id
+from .crawl import Crawler
+from .jobs import TWEET, USER, Item, JobStore, parse_follow
+from .scraper import Scraper, parse_screen_name, parse_tweet_id
 from .storage import FORMATS, TweetWriter, export, load
 
 # Tweets are analysed and written in chunks of this size while a batch streams in.
@@ -91,6 +94,32 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--limit", type=int, help="keep at most N tweets per user")
     _add_network_args(p)
     _add_output_args(p)
+
+    p = sub.add_parser("crawl", help="run a resumable crawl job stored in a SQLite file",
+                       description="Fetch seeds and, optionally, the tweets they reply to, quote or "
+                                   "retweet. Progress lives in JOB, so an interrupted crawl resumes "
+                                   "where it stopped, and several crawl processes can share one JOB.")
+    p.add_argument("job", metavar="JOB.db", help="job file (created if missing)")
+    p.add_argument("seeds", nargs="*", metavar="SEED",
+                   help="tweet ID/URL, or @name / profile URL for a profile's timeline")
+    p.add_argument("-i", "--input", dest="input_file", metavar="FILE",
+                   help="read seeds from FILE, one per line ('-' for stdin)")
+    p.add_argument("--follow", help="links to follow: parents,quotes,retweets | all | none "
+                                    "(default: none, or the job's stored setting)")
+    p.add_argument("--depth", type=int, help="how many links away from a seed to go (default 0, or stored)")
+    p.add_argument("--max-attempts", type=int,
+                   help="attempts per item before it is parked as failed (default 3, or stored)")
+    p.add_argument("--max-items", type=int, help="stop after this many items (the rest stay queued)")
+    p.add_argument("--no-run", action="store_true", help="only add the seeds and settings")
+    _add_network_args(p)
+
+    p = sub.add_parser("job", help="inspect or manage a crawl job")
+    p.add_argument("action", choices=("status", "retry", "export"),
+                   help="status: progress and workers; retry: requeue failed items; "
+                        "export: write the job's tweets to -o")
+    p.add_argument("job", metavar="JOB.db")
+    p.add_argument("-o", "--output", help="export destination (.json/.jsonl/.csv/.db)")
+    p.add_argument("--format", choices=FORMATS)
 
     p = sub.add_parser("analyze", help="analyse tweets saved as .json/.jsonl/.db")
     p.add_argument("input")
@@ -382,8 +411,122 @@ def cmd_bench(args) -> int:
     return 0
 
 
-COMMANDS = {"tweet": cmd_tweet, "thread": cmd_thread, "user": cmd_user,
-            "analyze": cmd_analyze, "bench": cmd_bench}
+def _seed(value: str) -> Item:
+    """Numeric IDs and status URLs are tweets; @names, bare names and profile URLs are profiles."""
+    v = value.strip()
+    try:
+        return Item(TWEET, parse_tweet_id(v))
+    except ValueError:
+        return Item(USER, parse_screen_name(v))
+
+
+def _fetchers(args, stack: contextlib.AsyncExitStack):
+    """Coroutines that fetch one tweet / one timeline with the chosen HTTP engine."""
+    include_retweets = True
+    if _use_async(args):
+        from .aio import AsyncHttpClient, AsyncScraper
+
+        async def open_async():
+            client = await stack.enter_async_context(
+                AsyncHttpClient(concurrency=args.workers, **_client_kwargs(args)))
+            scraper = AsyncScraper(client, lang=args.lang)
+            return scraper.tweet, lambda name: scraper.user_timeline(name, include_retweets)
+        return open_async()
+
+    scraper = Scraper(_client(args), lang=args.lang, workers=args.workers)
+
+    async def open_sync():
+        async def tweet(key):
+            return await asyncio.to_thread(scraper.tweet, key)
+
+        async def user(name):
+            return await asyncio.to_thread(scraper.user_timeline, name, include_retweets)
+        return tweet, user
+    return open_sync()
+
+
+def cmd_crawl(args) -> int:
+    seeds = [_seed(v) for v in (_refs(args, args.seeds) if args.seeds or args.input_file else [])]
+    with JobStore(args.job) as store:
+        cfg = store.configure(
+            follow=parse_follow(args.follow) if args.follow is not None else None,
+            max_depth=args.depth, max_attempts=args.max_attempts)
+        added = store.add(seeds)
+        if seeds:
+            print(f"queued {added} new seeds ({len(seeds) - added} already in the job)", file=sys.stderr)
+        if args.no_run:
+            return 0
+        if not any(store.counts()[s] for s in ("pending", "leased")):
+            print("nothing to crawl: the job has no queued items (add seeds, or `xscraper job retry`)",
+                  file=sys.stderr)
+            return 0 if store.counts()["done"] else 1
+        logging.getLogger("xscraper").info(
+            "crawl settings: follow=%s depth=%d max-attempts=%d",
+            ",".join(cfg.follow) or "none", cfg.max_depth, cfg.max_attempts)
+
+        async def run() -> dict:
+            async with contextlib.AsyncExitStack() as stack:
+                fetch_tweet, fetch_user = await _fetchers(args, stack)
+                crawler = Crawler(store, fetch_tweet, fetch_user, concurrency=args.workers)
+                return await crawler.run(max_items=args.max_items)
+
+        start = time.perf_counter()
+        totals = asyncio.run(run())
+        elapsed = time.perf_counter() - start
+        items = totals["done"] + totals["missing"] + totals["failed"] + totals["retry"]
+        print(f"crawled {items:,} items in {elapsed:.1f}s: {totals['done']:,} done, "
+              f"{totals['missing']:,} unavailable, {totals['retry']:,} to retry, {totals['failed']:,} failed; "
+              f"{totals['stored']:,} new tweets stored, {totals['queued']:,} links queued", file=sys.stderr)
+        _print_job(store)
+        counts = store.counts()
+    return 1 if counts["failed"] else 0
+
+
+def _print_job(store: JobStore) -> None:
+    c = store.counts()
+    total = sum(c.values())
+    print(f"job {store.path}: {total:,} items | " + " | ".join(f"{s} {c[s]:,}" for s in c)
+          + f" | {len(store.tweets):,} tweets stored", file=sys.stderr)
+
+
+def cmd_job(args) -> int:
+    if not os.path.isfile(args.job):
+        raise ValueError(f"no such job: {args.job}")
+    with JobStore(args.job) as store:
+        if args.action == "retry":
+            print(f"requeued {store.retry_failed():,} failed items", file=sys.stderr)
+            return 0
+        if args.action == "export":
+            if not args.output:
+                raise ValueError("job export needs -o FILE")
+            with TweetWriter(args.output, args.format) as writer:
+                batch: list[Tweet] = []
+                for t in store.tweets:
+                    batch.append(t)
+                    if len(batch) >= CHUNK:
+                        writer.write(batch)
+                        batch = []
+                writer.write(batch)
+            print(f"wrote {writer.written:,} tweets to {args.output}", file=sys.stderr)
+            return 0
+        cfg = store.config
+        print(f"settings: follow={','.join(cfg.follow) or 'none'} depth={cfg.max_depth} "
+              f"max-attempts={cfg.max_attempts}")
+        c = store.counts()
+        print("items: " + ", ".join(f"{s} {c[s]:,}" for s in c) + f"; tweets stored: {len(store.tweets):,}")
+        now = time.time()
+        for w in store.workers():
+            print(f"worker {w['id']}: last heartbeat {now - w['heartbeat']:.0f}s ago")
+        failures = store.failures(10)
+        if failures:
+            print("recent failures:")
+            for kind, key, attempts, err in failures:
+                print(f"  {kind} {key} ({attempts} attempts): {err}")
+    return 0
+
+
+COMMANDS = {"tweet": cmd_tweet, "thread": cmd_thread, "user": cmd_user, "crawl": cmd_crawl,
+            "job": cmd_job, "analyze": cmd_analyze, "bench": cmd_bench}
 
 
 def main(argv: Optional[Sequence[str]] = None) -> int:

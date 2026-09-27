@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass, field
+from dataclasses import dataclass, field
 from typing import Any, Optional
 
 
@@ -57,7 +57,15 @@ class Tweet:
         return self.retweeted_tweet_id is not None
 
     def to_dict(self) -> dict[str, Any]:
-        d = asdict(self)
+        # Same result as dataclasses.asdict (plus "url"), built directly:
+        # asdict's generic deep copy was the slowest step of every export.
+        d = dict(self.__dict__)
+        d["user"] = dict(self.user.__dict__)
+        d["media"] = [dict(m.__dict__) for m in self.media]
+        for key in ("hashtags", "mentions", "urls"):
+            d[key] = list(d[key])
+        if self.analysis is not None:
+            d["analysis"] = {k: list(v) if isinstance(v, list) else v for k, v in self.analysis.items()}
         d["url"] = self.url
         return d
 

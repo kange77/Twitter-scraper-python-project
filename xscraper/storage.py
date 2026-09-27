@@ -46,26 +46,77 @@ def csv_row(t: Tweet) -> dict:
     }
 
 
+class TweetWriter:
+    """Incremental writer: call ``write`` with batches as they arrive.
+
+    JSON Lines, CSV and SQLite rows reach disk batch by batch, so a long
+    scrape keeps what it has fetched if it is interrupted and never holds the
+    whole result set in memory. JSON is written as one array that is closed
+    by ``close``; the output is byte-for-byte what ``json.dump(indent=2)``
+    would produce.
+    """
+
+    def __init__(self, path: str | Path, fmt: Optional[str] = None):
+        self.fmt = detect_format(path, fmt)
+        self.path = Path(path)
+        self.written = 0  # tweets written (for SQLite: newly stored)
+        self.seen = 0
+        self._store: Optional[TweetStore] = None
+        self._file = None
+        if self.fmt == "sqlite":
+            self._store = TweetStore(self.path)
+            return
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        self._file = self.path.open("w", encoding="utf-8", newline="")
+        if self.fmt == "csv":
+            self._csv = csv.DictWriter(self._file, fieldnames=CSV_FIELDS)
+            self._csv.writeheader()
+        elif self.fmt == "json":
+            self._file.write("[")
+
+    def write(self, tweets: Iterable[Tweet]) -> None:
+        tweets = list(tweets)
+        self.seen += len(tweets)
+        if self._store is not None:
+            self.written += self._store.upsert(tweets)
+            return
+        f = self._file
+        if self.fmt == "jsonl":
+            f.write("".join(json.dumps(t.to_dict(), ensure_ascii=False) + "\n" for t in tweets))
+        elif self.fmt == "csv":
+            self._csv.writerows(csv_row(t) for t in tweets)
+        else:
+            for t in tweets:
+                item = json.dumps(t.to_dict(), ensure_ascii=False, indent=2).replace("\n", "\n  ")
+                f.write(("," if self.written else "") + "\n  " + item)
+                self.written += 1
+            f.flush()
+            return
+        self.written += len(tweets)
+        f.flush()
+
+    def close(self) -> None:
+        if self._store is not None:
+            self._store.close()
+            self._store = None
+        elif self._file is not None:
+            if self.fmt == "json":
+                self._file.write("\n]" if self.written else "]")
+            self._file.close()
+            self._file = None
+
+    def __enter__(self) -> "TweetWriter":
+        return self
+
+    def __exit__(self, *exc) -> None:
+        self.close()
+
+
 def export(tweets: Iterable[Tweet], path: str | Path, fmt: Optional[str] = None) -> int:
     """Write tweets to ``path``; returns how many were written (or newly stored)."""
-    fmt = detect_format(path, fmt)
-    tweets = list(tweets)
-    path = Path(path)
-    if fmt == "sqlite":
-        with TweetStore(path) as store:
-            return store.upsert(tweets)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("w", encoding="utf-8", newline="") as f:
-        if fmt == "json":
-            json.dump([t.to_dict() for t in tweets], f, ensure_ascii=False, indent=2)
-        elif fmt == "jsonl":
-            for t in tweets:
-                f.write(json.dumps(t.to_dict(), ensure_ascii=False) + "\n")
-        else:
-            writer = csv.DictWriter(f, fieldnames=CSV_FIELDS)
-            writer.writeheader()
-            writer.writerows(csv_row(t) for t in tweets)
-    return len(tweets)
+    with TweetWriter(path, fmt) as writer:
+        writer.write(tweets)
+    return writer.written
 
 
 def load(path: str | Path, fmt: Optional[str] = None) -> list[Tweet]:
@@ -133,20 +184,25 @@ class TweetStore:
     def upsert(self, tweets: Iterable[Tweet]) -> int:
         """Insert new tweets and refresh known ones; returns the number of new tweets."""
         now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-        new = 0
+        rows = [(t.id, t.user.screen_name, t.created_at, t.text,
+                 json.dumps(t.to_dict(), ensure_ascii=False), now, now) for t in tweets]
+        if not rows:
+            return 0
+        ids = list(dict.fromkeys(r[0] for r in rows))
+        existing: set[str] = set()
+        for i in range(0, len(ids), 500):  # stay under SQLite's bound-parameter limit
+            chunk = ids[i:i + 500]
+            existing.update(r[0] for r in self.conn.execute(
+                f"SELECT id FROM tweets WHERE id IN ({','.join('?' * len(chunk))})", chunk))
         with self.conn:
-            for t in tweets:
-                exists = self.conn.execute("SELECT 1 FROM tweets WHERE id = ?", (t.id,)).fetchone()
-                self.conn.execute(
-                    """INSERT INTO tweets (id, screen_name, created_at, text, data, first_seen, last_seen)
-                       VALUES (?, ?, ?, ?, ?, ?, ?)
-                       ON CONFLICT(id) DO UPDATE SET data = excluded.data, text = excluded.text,
-                           last_seen = excluded.last_seen""",
-                    (t.id, t.user.screen_name, t.created_at, t.text,
-                     json.dumps(t.to_dict(), ensure_ascii=False), now, now),
-                )
-                new += exists is None
-        return new
+            self.conn.executemany(
+                """INSERT INTO tweets (id, screen_name, created_at, text, data, first_seen, last_seen)
+                   VALUES (?, ?, ?, ?, ?, ?, ?)
+                   ON CONFLICT(id) DO UPDATE SET data = excluded.data, text = excluded.text,
+                       last_seen = excluded.last_seen""",
+                rows,
+            )
+        return len(ids) - len(existing)
 
     def known_ids(self) -> set[str]:
         return {r[0] for r in self.conn.execute("SELECT id FROM tweets")}

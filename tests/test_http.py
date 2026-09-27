@@ -2,7 +2,7 @@ import pytest
 import requests
 
 from tests.conftest import FakeResponse
-from xscraper.http import HttpClient, HttpError, NotFound, RateLimiter, retry_after_seconds
+from xscraper.http import HttpClient, HttpError, NotFound, RateGate, RateLimiter, retry_after_seconds
 
 
 class FakeSession:
@@ -21,7 +21,13 @@ class FakeSession:
 
 def client(responses, **kw):
     sleeps = []
-    c = HttpClient(rate=1000, session=FakeSession(responses), sleep=sleeps.append, **kw)
+    now = [1000.0]
+
+    def sleep(s):
+        sleeps.append(s)
+        now[0] += s
+
+    c = HttpClient(rate=1000, session=FakeSession(responses), sleep=sleep, clock=lambda: now[0], **kw)
     return c, sleeps
 
 
@@ -79,3 +85,60 @@ def test_rate_limiter_waits_between_tokens():
     for _ in range(4):
         limiter.acquire()
     assert waits == pytest.approx([0.5, 0.5])
+
+
+class Clock:
+    def __init__(self, now=1000.0):
+        self.now = now
+
+    def __call__(self):
+        return self.now
+
+
+def limits(remaining, reset):
+    return {"x-rate-limit-remaining": str(remaining), "x-rate-limit-reset": str(reset)}
+
+
+def test_gate_holds_requests_once_the_window_budget_is_spent():
+    clock = Clock()
+    gate = RateGate(clock=clock)
+    assert gate.enter() == 0 and gate.enter() == 0 and gate.enter() == 0
+    # Server says 2 left; two other requests are still in flight, so nothing is.
+    gate.leave(200, limits(2, 1010))
+    assert gate.enter() == pytest.approx(10)
+    clock.now = 1010
+    assert gate.enter() == 0  # new window: budget unknown until a response says
+
+
+def test_gate_counts_down_budget_and_ignores_the_previous_window():
+    clock = Clock()
+    gate = RateGate(clock=clock)
+    gate.enter()
+    gate.leave(200, limits(2, 1010))
+    assert gate.enter() == 0 and gate.enter() == 0
+    assert gate.enter() > 0
+    gate.leave(200, limits(50, 1005))  # late answer carrying an older reset
+    assert gate.enter() > 0
+
+
+def test_gate_pauses_everyone_on_429():
+    clock = Clock()
+    gate = RateGate(clock=clock)
+    gate.enter()
+    assert gate.leave(429, {"Retry-After": "30"}) == 30
+    assert gate.enter() == pytest.approx(30)
+    gate.leave(200, {})  # a success without limit headers doesn't lift the pause
+    assert gate.wait_time() == pytest.approx(30)
+
+
+def test_client_waits_for_reset_instead_of_drawing_a_429():
+    c, sleeps = client([FakeResponse(200, b"a", headers=limits(0, 1060)), FakeResponse(200, b"b")])
+    c.get("https://x")
+    assert not sleeps
+    assert c.get("https://x").content == b"b"
+    assert len(sleeps) == 1 and 60 <= sleeps[0] <= 60.25
+
+
+def test_pool_is_sized_for_the_workers():
+    c = HttpClient(pool_size=64)
+    assert c.session.get_adapter("https://x.com")._pool_maxsize == 64

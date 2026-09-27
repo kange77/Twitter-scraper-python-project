@@ -10,10 +10,11 @@ from __future__ import annotations
 
 import logging
 import re
+from collections import deque
 from concurrent.futures import ThreadPoolExecutor
-from typing import Iterable, Optional
+from typing import Iterable, Iterator, Optional
 
-from .http import HttpClient, HttpError, NotFound
+from .http import HttpClient, HttpError, NotFound, loads
 from .models import Tweet
 from .parse import ParseError, parse_timeline_page, parse_tweet_result
 from .token import syndication_token
@@ -51,6 +52,29 @@ def parse_screen_name(value: str) -> str:
     return s
 
 
+def tweet_params(tweet_id: str, lang: str) -> dict:
+    return {"id": tweet_id, "lang": lang, "token": syndication_token(tweet_id)}
+
+
+def tweet_from_body(tweet_id: str, body: bytes) -> Optional[Tweet]:
+    """Parse a tweet-result response body; None when the tweet is unavailable."""
+    if not body.strip():
+        return None
+    try:
+        data = loads(body)
+    except ValueError as exc:
+        raise ParseError(f"tweet {tweet_id}: response was not JSON "
+                         "(request blocked or endpoint changed)") from exc
+    return parse_tweet_result(data)
+
+
+def timeline_from_page(page: str, include_retweets: bool) -> list[Tweet]:
+    tweets = parse_timeline_page(page)
+    if not include_retweets:
+        tweets = [t for t in tweets if not t.is_retweet]
+    return tweets
+
+
 class Scraper:
     def __init__(self, client: Optional[HttpClient] = None, lang: str = "en", workers: int = 4):
         self.client = client or HttpClient()
@@ -60,19 +84,11 @@ class Scraper:
     def tweet(self, tweet: str | int) -> Optional[Tweet]:
         """Fetch one tweet by ID or URL. Returns None if it's deleted or private."""
         tweet_id = parse_tweet_id(tweet)
-        params = {"id": tweet_id, "lang": self.lang, "token": syndication_token(tweet_id)}
         try:
-            resp = self.client.get(TWEET_ENDPOINT, params=params)
+            resp = self.client.get(TWEET_ENDPOINT, params=tweet_params(tweet_id, self.lang))
         except NotFound:
             return None
-        if not resp.content.strip():
-            return None
-        try:
-            data = resp.json()
-        except ValueError as exc:
-            raise ParseError(f"tweet {tweet_id}: response was not JSON "
-                             "(request blocked or endpoint changed)") from exc
-        return parse_tweet_result(data)
+        return tweet_from_body(tweet_id, resp.content)
 
     def tweets(self, tweets: Iterable[str | int], return_exceptions: bool = False) -> list:
         """Fetch many tweets concurrently (still within the client's rate limit).
@@ -82,7 +98,16 @@ class Scraper:
         exception in the result list instead of aborting the whole batch.
         """
         ids = [parse_tweet_id(t) for t in tweets]
+        return list(self.iter_tweets(ids, return_exceptions))
 
+    def iter_tweets(self, tweets: Iterable[str | int], return_exceptions: bool = False,
+                    window: Optional[int] = None) -> Iterator:
+        """Like ``tweets`` but yields results in input order as they arrive.
+
+        At most ``window`` (default ``4 * workers``) tweets are in flight or
+        waiting to be yielded, so memory stays flat however long ``tweets``
+        is, and ``tweets`` can be a lazy iterable such as an open file.
+        """
         def fetch(tweet_id: str):
             try:
                 return self.tweet(tweet_id)
@@ -91,10 +116,22 @@ class Scraper:
                     raise
                 return exc
 
-        if len(ids) <= 1 or self.workers == 1:
-            return [fetch(i) for i in ids]
-        with ThreadPoolExecutor(max_workers=self.workers) as pool:
-            return list(pool.map(fetch, ids))
+        if self.workers == 1:
+            for t in tweets:
+                yield fetch(parse_tweet_id(t))
+            return
+        window = max(1, window or 4 * self.workers)
+        pool = ThreadPoolExecutor(max_workers=self.workers)
+        pending: deque = deque()
+        try:
+            for t in tweets:
+                pending.append(pool.submit(fetch, parse_tweet_id(t)))
+                if len(pending) >= window:
+                    yield pending.popleft().result()
+            while pending:
+                yield pending.popleft().result()
+        finally:
+            pool.shutdown(wait=True, cancel_futures=True)
 
     def thread(self, tweet: str | int, max_depth: int = 50) -> list[Tweet]:
         """The reply chain leading up to (and including) a tweet, oldest first."""
@@ -121,7 +158,21 @@ class Scraper:
         """Recent tweets from a profile, newest first."""
         name = parse_screen_name(screen_name)
         resp = self.client.get(TIMELINE_ENDPOINT.format(name), params={"showReplies": "true"})
-        tweets = parse_timeline_page(resp.text)
-        if not include_retweets:
-            tweets = [t for t in tweets if not t.is_retweet]
-        return tweets
+        return timeline_from_page(resp.text, include_retweets)
+
+    def user_timelines(self, screen_names: Iterable[str], include_retweets: bool = True) -> list:
+        """Timelines for several profiles fetched concurrently, in input order.
+
+        Each entry is a list of tweets, or the exception that profile raised.
+        """
+        def fetch(name: str):
+            try:
+                return self.user_timeline(name, include_retweets)
+            except (HttpError, ParseError, ValueError) as exc:
+                return exc
+
+        names = list(screen_names)
+        if len(names) <= 1 or self.workers == 1:
+            return [fetch(n) for n in names]
+        with ThreadPoolExecutor(max_workers=min(self.workers, len(names))) as pool:
+            return list(pool.map(fetch, names))

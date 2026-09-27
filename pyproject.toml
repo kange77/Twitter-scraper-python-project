@@ -13,7 +13,8 @@ dependencies = ["requests>=2.28"]
 
 [project.optional-dependencies]
 wasm = ["wasmtime>=20"]
-dev = ["wasmtime>=20", "pytest>=7"]
+fast = ["aiohttp>=3.9", "orjson>=3.9"]
+dev = ["wasmtime>=20", "aiohttp>=3.9", "orjson>=3.9", "pytest>=7"]
 
 [project.scripts]
 xscraper = "xscraper.cli:main"

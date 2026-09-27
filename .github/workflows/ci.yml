@@ -24,7 +24,7 @@ jobs:
         run: pip install -e ".[dev]"
       - name: Test (includes WASM/Python parity)
         run: pytest -q
-      - name: Test without wasmtime (pure-Python fallback)
+      - name: Test without optional extras (pure-Python analysis, sync HTTP, stdlib JSON)
         run: |
-          pip uninstall -y wasmtime
+          pip uninstall -y wasmtime aiohttp orjson
           pytest -q

@@ -22,7 +22,9 @@ from .models import Tweet
 from .parse import ParseError
 from .crawl import Crawler
 from .metrics import AdaptiveLimit, Metrics
+from .shared import SharedRateGate, SharedRateLimiter
 from .jobs import TWEET, USER, Item, JobStore, parse_follow
+from . import scraper as _scraper_mod
 from .scraper import Scraper, parse_screen_name, parse_tweet_id
 from .storage import FORMATS, TweetWriter, export, load
 
@@ -121,7 +123,12 @@ def build_parser() -> argparse.ArgumentParser:
                    help="serve Prometheus /metrics, JSON /stats and /healthz on 127.0.0.1:PORT")
     g.add_argument("--no-adaptive", action="store_true",
                    help="keep --workers requests in flight even when the server signals overload")
+    p.add_argument("--processes", type=int, default=1, metavar="N",
+                   help="crawler processes to run on this job (default 1). They share the job's "
+                        "rate budget, so this adds CPU for parsing and storing, not requests/s")
     _add_network_args(p)
+    # The job remembers its rate; --rate changes it for every process on the job.
+    p.set_defaults(rate=None)
 
     p = sub.add_parser("job", help="inspect or manage a crawl job")
     p.add_argument("action", choices=("status", "retry", "export"),
@@ -430,6 +437,13 @@ def _seed(value: str) -> Item:
         return Item(USER, parse_screen_name(v))
 
 
+def _share_limits(client, args) -> None:
+    """Swap the client's rate limiter and gate for ones every process on the job shares."""
+    kw = _client_kwargs(args)
+    client.limiter = SharedRateLimiter(args.job, kw["rate"], kw["burst"])
+    client.gate = SharedRateGate(args.job)
+
+
 def _fetchers(args, stack: contextlib.AsyncExitStack, observer=None):
     """Coroutines that fetch one tweet / one timeline with the chosen HTTP engine."""
     include_retweets = True
@@ -439,12 +453,14 @@ def _fetchers(args, stack: contextlib.AsyncExitStack, observer=None):
         async def open_async():
             client = await stack.enter_async_context(
                 AsyncHttpClient(concurrency=args.workers, observer=observer, **_client_kwargs(args)))
+            _share_limits(client, args)
             scraper = AsyncScraper(client, lang=args.lang)
             return scraper.tweet, lambda name: scraper.user_timeline(name, include_retweets)
         return open_async()
 
     client = _client(args)
     client.observer = observer
+    _share_limits(client, args)
     scraper = Scraper(client, lang=args.lang, workers=args.workers)
 
     async def open_sync():
@@ -462,7 +478,8 @@ def cmd_crawl(args) -> int:
     with JobStore(args.job) as store:
         cfg = store.configure(
             follow=parse_follow(args.follow) if args.follow is not None else None,
-            max_depth=args.depth, max_attempts=args.max_attempts)
+            max_depth=args.depth, max_attempts=args.max_attempts, rate=args.rate)
+        args.rate = cfg.rate
         added = store.add(seeds)
         if seeds:
             print(f"queued {added} new seeds ({len(seeds) - added} already in the job)", file=sys.stderr)
@@ -473,8 +490,9 @@ def cmd_crawl(args) -> int:
                   file=sys.stderr)
             return 0 if store.counts()["done"] else 1
         logging.getLogger("xscraper").info(
-            "crawl settings: follow=%s depth=%d max-attempts=%d",
-            ",".join(cfg.follow) or "none", cfg.max_depth, cfg.max_attempts)
+            "crawl settings: follow=%s depth=%d max-attempts=%d rate=%g/s",
+            ",".join(cfg.follow) or "none", cfg.max_depth, cfg.max_attempts, cfg.rate)
+        helpers = _spawn_helpers(args)
 
         metrics = Metrics()
         limit = None if args.no_adaptive else AdaptiveLimit(args.workers)
@@ -497,11 +515,19 @@ def cmd_crawl(args) -> int:
         start = time.perf_counter()
         try:
             totals = asyncio.run(run())
+            for h in helpers:
+                h.join()
         finally:
+            for h in helpers:
+                h.join(timeout=30)
             _write_stats(args.stats_file, metrics)
             if server is not None:
                 server.shutdown()
         elapsed = time.perf_counter() - start
+        if getattr(args, "quiet", False):
+            return 0
+        if helpers:
+            print(f"{len(helpers) + 1} processes; totals below are this process's share", file=sys.stderr)
         items = totals["done"] + totals["missing"] + totals["failed"] + totals["retry"]
         print(f"crawled {items:,} items in {elapsed:.1f}s: {totals['done']:,} done, "
               f"{totals['missing']:,} unavailable, {totals['retry']:,} to retry, {totals['failed']:,} failed; "
@@ -512,6 +538,39 @@ def cmd_crawl(args) -> int:
         _print_job(store)
         counts = store.counts()
     return 1 if counts["failed"] else 0
+
+
+def _helper_main(args) -> None:
+    """Entry point of an extra crawler process started by --processes."""
+    logging.basicConfig(level=logging.WARNING - 10 * min(args.verbose, 2),
+                        format="%(levelname)s %(name)s: %(message)s")
+    # Carry over endpoint overrides (tests and benchmarks point these at a mock).
+    _scraper_mod.TWEET_ENDPOINT, _scraper_mod.TIMELINE_ENDPOINT = args.endpoints
+    try:
+        cmd_crawl(args)
+    except KeyboardInterrupt:
+        pass
+
+
+def _spawn_helpers(args) -> list:
+    if args.processes <= 1:
+        return []
+    import copy
+    import multiprocessing
+
+    ctx = multiprocessing.get_context("spawn")  # no inherited threads, event loops or connections
+    helper_args = copy.copy(args)
+    helper_args.seeds, helper_args.input_file = [], None  # the parent already queued them
+    helper_args.follow = helper_args.depth = helper_args.max_attempts = None
+    helper_args.processes, helper_args.progress = 1, 0
+    helper_args.stats_file = helper_args.metrics_port = None
+    helper_args.quiet = True
+    helper_args.endpoints = (_scraper_mod.TWEET_ENDPOINT, _scraper_mod.TIMELINE_ENDPOINT)
+    procs = [ctx.Process(target=_helper_main, args=(helper_args,), name=f"xscraper-crawl-{i + 1}")
+             for i in range(args.processes - 1)]
+    for p in procs:
+        p.start()
+    return procs
 
 
 def _write_stats(path: Optional[str], metrics: Metrics) -> None:

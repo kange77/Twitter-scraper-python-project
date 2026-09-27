@@ -93,15 +93,17 @@ class JobConfig:
     follow: tuple[str, ...] = ()
     max_depth: int = 0
     max_attempts: int = 3
+    rate: float = 1.0  # requests/second for the whole job, however many processes run it
 
     def to_meta(self) -> dict:
         return {"follow": ",".join(self.follow), "max_depth": str(self.max_depth),
-                "max_attempts": str(self.max_attempts)}
+                "max_attempts": str(self.max_attempts), "rate": repr(self.rate)}
 
     @classmethod
     def from_meta(cls, meta: dict) -> "JobConfig":
         follow = tuple(f for f in meta.get("follow", "").split(",") if f)
-        return cls(follow, int(meta.get("max_depth", 0)), int(meta.get("max_attempts", 3)))
+        return cls(follow, int(meta.get("max_depth", 0)), int(meta.get("max_attempts", 3)),
+                   float(meta.get("rate", 1.0)))
 
 
 def parse_follow(value: str) -> tuple[str, ...]:
@@ -170,12 +172,15 @@ class JobStore:
         return dict(self.conn.execute("SELECT key, value FROM meta"))
 
     def configure(self, follow: Optional[tuple[str, ...]] = None, max_depth: Optional[int] = None,
-                  max_attempts: Optional[int] = None) -> JobConfig:
+                  max_attempts: Optional[int] = None, rate: Optional[float] = None) -> JobConfig:
         """Set whichever settings are given; the rest keep their stored values."""
         cfg = self.config
+        if rate is not None and rate <= 0:
+            raise ValueError("rate must be positive")
         cfg = JobConfig(cfg.follow if follow is None else follow,
                         cfg.max_depth if max_depth is None else max_depth,
-                        cfg.max_attempts if max_attempts is None else max(1, max_attempts))
+                        cfg.max_attempts if max_attempts is None else max(1, max_attempts),
+                        cfg.rate if rate is None else rate)
         with self._tx():
             self.conn.executemany("INSERT OR REPLACE INTO meta (key, value) VALUES (?, ?)",
                                   cfg.to_meta().items())

@@ -1,0 +1,104 @@
+"""Scrape public tweets through X's syndication (embed) endpoints.
+
+These are the endpoints that power embedded tweets and profile widgets on
+third-party sites. They serve public data without logging in, which makes
+them far more stable than scraping x.com's JavaScript app, but coverage is
+narrower: the profile widget returns a recent slice of a timeline, not the
+full history, and X may restrict it at any time.
+"""
+from __future__ import annotations
+
+import logging
+import re
+from concurrent.futures import ThreadPoolExecutor
+from typing import Iterable, Optional
+
+from .http import HttpClient, NotFound
+from .models import Tweet
+from .parse import parse_timeline_page, parse_tweet_result
+from .token import syndication_token
+
+log = logging.getLogger(__name__)
+
+TWEET_ENDPOINT = "https://cdn.syndication.twimg.com/tweet-result"
+TIMELINE_ENDPOINT = "https://syndication.twitter.com/srv/timeline-profile/screen-name/{}"
+
+_STATUS_URL = re.compile(r"(?:twitter\.com|x\.com)/(?:[^/]+/status(?:es)?|i/web/status)/(\d+)", re.I)
+_PROFILE_URL = re.compile(r"(?:twitter\.com|x\.com)/@?([A-Za-z0-9_]{1,15})(?:[/?#]|$)", re.I)
+_SCREEN_NAME = re.compile(r"^[A-Za-z0-9_]{1,15}$")
+
+
+def parse_tweet_id(value: str | int) -> str:
+    """Accept a numeric ID or any x.com / twitter.com status URL."""
+    s = str(value).strip()
+    if s.isdigit():
+        return s
+    m = _STATUS_URL.search(s)
+    if m:
+        return m.group(1)
+    raise ValueError(f"not a tweet ID or status URL: {value!r}")
+
+
+def parse_screen_name(value: str) -> str:
+    """Accept ``name``, ``@name`` or a profile URL."""
+    s = value.strip()
+    m = _PROFILE_URL.search(s)
+    if m:
+        s = m.group(1)
+    s = s.lstrip("@")
+    if not _SCREEN_NAME.match(s):
+        raise ValueError(f"not a valid screen name: {value!r}")
+    return s
+
+
+class Scraper:
+    def __init__(self, client: Optional[HttpClient] = None, lang: str = "en", workers: int = 4):
+        self.client = client or HttpClient()
+        self.lang = lang
+        self.workers = max(1, workers)
+
+    def tweet(self, tweet: str | int) -> Optional[Tweet]:
+        """Fetch one tweet by ID or URL. Returns None if it's deleted or private."""
+        tweet_id = parse_tweet_id(tweet)
+        params = {"id": tweet_id, "lang": self.lang, "token": syndication_token(tweet_id)}
+        try:
+            resp = self.client.get(TWEET_ENDPOINT, params=params)
+        except NotFound:
+            return None
+        if not resp.content.strip():
+            return None
+        return parse_tweet_result(resp.json())
+
+    def tweets(self, tweets: Iterable[str | int]) -> list[Optional[Tweet]]:
+        """Fetch many tweets concurrently (still within the client's rate limit).
+
+        Results are in input order; missing tweets are None.
+        """
+        ids = [parse_tweet_id(t) for t in tweets]
+        if len(ids) <= 1 or self.workers == 1:
+            return [self.tweet(i) for i in ids]
+        with ThreadPoolExecutor(max_workers=self.workers) as pool:
+            return list(pool.map(self.tweet, ids))
+
+    def thread(self, tweet: str | int, max_depth: int = 50) -> list[Tweet]:
+        """The reply chain leading up to (and including) a tweet, oldest first."""
+        chain: list[Tweet] = []
+        seen: set[str] = set()
+        next_id: Optional[str] = parse_tweet_id(tweet)
+        while next_id and next_id not in seen and len(chain) < max_depth:
+            seen.add(next_id)
+            current = self.tweet(next_id)
+            if current is None:
+                break
+            chain.append(current)
+            next_id = current.in_reply_to_id
+        return list(reversed(chain))
+
+    def user_timeline(self, screen_name: str, include_retweets: bool = True) -> list[Tweet]:
+        """Recent tweets from a profile, newest first."""
+        name = parse_screen_name(screen_name)
+        resp = self.client.get(TIMELINE_ENDPOINT.format(name), params={"showReplies": "true"})
+        tweets = parse_timeline_page(resp.text)
+        if not include_retweets:
+            tweets = [t for t in tweets if not t.is_retweet]
+        return tweets

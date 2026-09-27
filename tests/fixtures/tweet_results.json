@@ -1,0 +1,148 @@
+{
+ "tweet": {
+  "__typename": "Tweet",
+  "lang": "en",
+  "favorite_count": 48213,
+  "conversation_count": 1204,
+  "created_at": "2024-09-12T14:05:33.000Z",
+  "id_str": "1834231234567890123",
+  "text": "We have liftoff! #Artemis heads for the Moon with @NASA_Orion aboard. Watch: https://t.co/live123 https://t.co/media999",
+  "display_text_range": [
+   0,
+   97
+  ],
+  "entities": {
+   "hashtags": [
+    {
+     "indices": [
+      17,
+      25
+     ],
+     "text": "Artemis"
+    }
+   ],
+   "urls": [
+    {
+     "display_url": "nasa.gov/live",
+     "expanded_url": "https://www.nasa.gov/live",
+     "indices": [
+      77,
+      100
+     ],
+     "url": "https://t.co/live123"
+    }
+   ],
+   "user_mentions": [
+    {
+     "id_str": "1",
+     "indices": [
+      51,
+      62
+     ],
+     "name": "Orion",
+     "screen_name": "NASA_Orion"
+    }
+   ],
+   "symbols": [],
+   "media": [
+    {
+     "display_url": "pic.x.com/abc",
+     "expanded_url": "https://x.com/NASA/status/1834231234567890123/video/1",
+     "url": "https://t.co/media999"
+    }
+   ]
+  },
+  "user": {
+   "id_str": "11348282",
+   "name": "NASA",
+   "screen_name": "NASA",
+   "verified": false,
+   "is_blue_verified": true,
+   "profile_image_url_https": "https://pbs.twimg.com/profile_images/1/nasa_normal.jpg"
+  },
+  "in_reply_to_status_id_str": "1834231000000000000",
+  "parent": {
+   "id_str": "1834231000000000000",
+   "user": {
+    "id_str": "11348282",
+    "name": "NASA",
+    "screen_name": "NASA",
+    "verified": false,
+    "is_blue_verified": true,
+    "profile_image_url_https": "https://pbs.twimg.com/profile_images/1/nasa_normal.jpg"
+   },
+   "text": "T-minus 10 minutes."
+  },
+  "mediaDetails": [
+   {
+    "type": "video",
+    "media_url_https": "https://pbs.twimg.com/ext_tw_video_thumb/1/pu/img/thumb.jpg",
+    "original_info": {
+     "width": 1920,
+     "height": 1080
+    },
+    "video_info": {
+     "variants": [
+      {
+       "content_type": "application/x-mpegURL",
+       "url": "https://video.twimg.com/1/pl/list.m3u8"
+      },
+      {
+       "bitrate": 632000,
+       "content_type": "video/mp4",
+       "url": "https://video.twimg.com/1/vid/640x360/low.mp4"
+      },
+      {
+       "bitrate": 2176000,
+       "content_type": "video/mp4",
+       "url": "https://video.twimg.com/1/vid/1280x720/high.mp4"
+      }
+     ]
+    }
+   }
+  ],
+  "quoted_tweet": {
+   "id_str": "1834000000000000001",
+   "text": "Countdown begins",
+   "user": {
+    "id_str": "11348282",
+    "name": "NASA",
+    "screen_name": "NASA",
+    "verified": false,
+    "is_blue_verified": true,
+    "profile_image_url_https": "https://pbs.twimg.com/profile_images/1/nasa_normal.jpg"
+   }
+  }
+ },
+ "parent": {
+  "__typename": "Tweet",
+  "lang": "en",
+  "favorite_count": 900,
+  "conversation_count": 12,
+  "created_at": "2024-09-12T13:55:00.000Z",
+  "id_str": "1834231000000000000",
+  "text": "T-minus 10 minutes. Go for launch &amp; good luck!",
+  "entities": {
+   "hashtags": [],
+   "urls": [],
+   "user_mentions": [],
+   "symbols": []
+  },
+  "user": {
+   "id_str": "11348282",
+   "name": "NASA",
+   "screen_name": "NASA",
+   "verified": false,
+   "is_blue_verified": true,
+   "profile_image_url_https": "https://pbs.twimg.com/profile_images/1/nasa_normal.jpg"
+  }
+ },
+ "tombstone": {
+  "__typename": "TweetTombstone",
+  "tombstone": {
+   "text": {
+    "text": "This Post was deleted by the Post author."
+   }
+  }
+ }
+}

@@ -4,6 +4,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import contextlib
+import json
 import logging
 import math
 import os
@@ -20,6 +21,7 @@ from .http import HttpClient, HttpError
 from .models import Tweet
 from .parse import ParseError
 from .crawl import Crawler
+from .metrics import AdaptiveLimit, Metrics
 from .jobs import TWEET, USER, Item, JobStore, parse_follow
 from .scraper import Scraper, parse_screen_name, parse_tweet_id
 from .storage import FORMATS, TweetWriter, export, load
@@ -111,6 +113,14 @@ def build_parser() -> argparse.ArgumentParser:
                    help="attempts per item before it is parked as failed (default 3, or stored)")
     p.add_argument("--max-items", type=int, help="stop after this many items (the rest stay queued)")
     p.add_argument("--no-run", action="store_true", help="only add the seeds and settings")
+    g = p.add_argument_group("monitoring")
+    g.add_argument("--progress", type=float, default=10.0, metavar="SECONDS",
+                   help="print a progress line this often (default 10; 0 to disable)")
+    g.add_argument("--stats-file", metavar="FILE", help="write run statistics as JSON to FILE (kept current)")
+    g.add_argument("--metrics-port", type=int, metavar="PORT",
+                   help="serve Prometheus /metrics, JSON /stats and /healthz on 127.0.0.1:PORT")
+    g.add_argument("--no-adaptive", action="store_true",
+                   help="keep --workers requests in flight even when the server signals overload")
     _add_network_args(p)
 
     p = sub.add_parser("job", help="inspect or manage a crawl job")
@@ -420,7 +430,7 @@ def _seed(value: str) -> Item:
         return Item(USER, parse_screen_name(v))
 
 
-def _fetchers(args, stack: contextlib.AsyncExitStack):
+def _fetchers(args, stack: contextlib.AsyncExitStack, observer=None):
     """Coroutines that fetch one tweet / one timeline with the chosen HTTP engine."""
     include_retweets = True
     if _use_async(args):
@@ -428,12 +438,14 @@ def _fetchers(args, stack: contextlib.AsyncExitStack):
 
         async def open_async():
             client = await stack.enter_async_context(
-                AsyncHttpClient(concurrency=args.workers, **_client_kwargs(args)))
+                AsyncHttpClient(concurrency=args.workers, observer=observer, **_client_kwargs(args)))
             scraper = AsyncScraper(client, lang=args.lang)
             return scraper.tweet, lambda name: scraper.user_timeline(name, include_retweets)
         return open_async()
 
-    scraper = Scraper(_client(args), lang=args.lang, workers=args.workers)
+    client = _client(args)
+    client.observer = observer
+    scraper = Scraper(client, lang=args.lang, workers=args.workers)
 
     async def open_sync():
         async def tweet(key):
@@ -464,22 +476,51 @@ def cmd_crawl(args) -> int:
             "crawl settings: follow=%s depth=%d max-attempts=%d",
             ",".join(cfg.follow) or "none", cfg.max_depth, cfg.max_attempts)
 
+        metrics = Metrics()
+        limit = None if args.no_adaptive else AdaptiveLimit(args.workers)
+        metrics.limit = limit
+        server = metrics.serve(args.metrics_port) if args.metrics_port else None
+
+        def progress() -> None:
+            if args.progress:
+                print(metrics.progress_line(), file=sys.stderr)
+            _write_stats(args.stats_file, metrics)
+
         async def run() -> dict:
             async with contextlib.AsyncExitStack() as stack:
-                fetch_tweet, fetch_user = await _fetchers(args, stack)
-                crawler = Crawler(store, fetch_tweet, fetch_user, concurrency=args.workers)
+                fetch_tweet, fetch_user = await _fetchers(args, stack, metrics)
+                crawler = Crawler(store, fetch_tweet, fetch_user, concurrency=args.workers, limit=limit,
+                                  observer=metrics, progress=progress,
+                                  progress_interval=args.progress or 5.0)
                 return await crawler.run(max_items=args.max_items)
 
         start = time.perf_counter()
-        totals = asyncio.run(run())
+        try:
+            totals = asyncio.run(run())
+        finally:
+            _write_stats(args.stats_file, metrics)
+            if server is not None:
+                server.shutdown()
         elapsed = time.perf_counter() - start
         items = totals["done"] + totals["missing"] + totals["failed"] + totals["retry"]
         print(f"crawled {items:,} items in {elapsed:.1f}s: {totals['done']:,} done, "
               f"{totals['missing']:,} unavailable, {totals['retry']:,} to retry, {totals['failed']:,} failed; "
               f"{totals['stored']:,} new tweets stored, {totals['queued']:,} links queued", file=sys.stderr)
+        if metrics.drift.alerts:
+            print("warning: payload drift suspected (" + ", ".join(sorted(metrics.drift.alerts))
+                  + "); X may have changed a payload shape", file=sys.stderr)
         _print_job(store)
         counts = store.counts()
     return 1 if counts["failed"] else 0
+
+
+def _write_stats(path: Optional[str], metrics: Metrics) -> None:
+    if not path:
+        return
+    tmp = f"{path}.tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(metrics.snapshot(), f, indent=2)
+    os.replace(tmp, path)  # readers never see a half-written file
 
 
 def _print_job(store: JobStore) -> None:
@@ -516,7 +557,14 @@ def cmd_job(args) -> int:
         print("items: " + ", ".join(f"{s} {c[s]:,}" for s in c) + f"; tweets stored: {len(store.tweets):,}")
         now = time.time()
         for w in store.workers():
-            print(f"worker {w['id']}: last heartbeat {now - w['heartbeat']:.0f}s ago")
+            line = f"worker {w['id']}: last heartbeat {now - w['heartbeat']:.0f}s ago"
+            st = w["stats"]
+            if st:
+                line += (f", {st['items'].get('done', 0):,} done, {st['items_per_s']:,.0f} items/s, "
+                         f"{st['responses'].get('429', 0)} × 429")
+                if st.get("drift_alerts"):
+                    line += ", DRIFT: " + ",".join(st["drift_alerts"])
+            print(line)
         failures = store.failures(10)
         if failures:
             print("recent failures:")

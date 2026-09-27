@@ -71,7 +71,9 @@ class AsyncHttpClient:
         session: Optional[aiohttp.ClientSession] = None,
         sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
         clock: Callable[[], float] = time.time,
+        observer=None,
     ):
+        self.observer = observer  # see HttpClient
         self.headers = {"User-Agent": user_agent or random.choice(USER_AGENTS),
                         "Accept-Language": "en-US,en;q=0.9"}
         if cookies:
@@ -116,17 +118,26 @@ class AsyncHttpClient:
         async with self._slots:
             # Checked after getting a slot, so requests queued behind a
             # rate-limit signal see it before they are sent.
+            obs = self.observer
             while (wait := self.gate.enter()) > 0:
-                await self._sleep(min(wait, self.max_backoff) + random.uniform(0, GATE_JITTER))
+                wait = min(wait, self.max_backoff) + random.uniform(0, GATE_JITTER)
+                if obs is not None:
+                    obs.on_wait("server", wait)
+                await self._sleep(wait)
             proxy = next(self._proxies) if self._proxies else None
+            started = time.monotonic()
             try:
                 async with self.session.get(url, params=params, headers=headers, proxy=proxy) as r:
                     body = await r.read()
                     resp = Response(r.status, body, CIMultiDictProxy(CIMultiDict(r.headers)),
                                     r.charset or "utf-8")
-            except BaseException:
+            except BaseException as exc:
                 self.gate.leave()
+                if obs is not None and isinstance(exc, (aiohttp.ClientError, asyncio.TimeoutError)):
+                    obs.on_response(None, time.monotonic() - started, type(exc).__name__)
                 raise
+            if obs is not None:
+                obs.on_response(resp.status_code, time.monotonic() - started)
             resp.server_wait = self.gate.leave(resp.status_code, resp.headers)
             return resp
 
@@ -137,6 +148,8 @@ class AsyncHttpClient:
         for attempt in range(self.retries + 1):
             wait = self.limiter.reserve()
             if wait > 0:
+                if self.observer is not None:
+                    self.observer.on_wait("rate_limit", wait)
                 await self._sleep(wait)
             resp = None
             server_wait = None
@@ -152,6 +165,8 @@ class AsyncHttpClient:
                 last_error = error
             if attempt == self.retries:
                 break
+            if self.observer is not None:
+                self.observer.on_retry()
             if server_wait is not None:
                 log.warning("%s on %s; pausing requests for %.1fs (retry %d/%d)", last_error, url,
                             server_wait, attempt + 1, self.retries)

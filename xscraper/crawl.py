@@ -36,6 +36,7 @@ class Crawler:
                  concurrency: int = 64, lease: float = 300.0, flush_size: int = 500,
                  flush_interval: float = 1.0, heartbeat: float = 5.0, stale_after: float = 60.0,
                  owner: Optional[str] = None, limit=None, observer=None,
+                 progress: Optional[Callable[[], None]] = None, progress_interval: float = 10.0,
                  clock: Callable[[], float] = time.monotonic):
         self.store = store
         self.fetch_tweet = fetch_tweet
@@ -49,8 +50,12 @@ class Crawler:
         self.owner = owner or new_worker_id()
         # Optional adaptive limit: anything with a ``limit`` attribute <= concurrency.
         self.limit = limit
-        # Optional observer with ``outcomes(list[Outcome], counts)`` and ``snapshot()``.
+        # Optional observer (a ``metrics.Metrics``): gets ``outcomes(list[Outcome], counts)``,
+        # ``snapshot()`` is saved with the heartbeat, and ``frontier`` is kept current.
         self.observer = observer
+        # Called every ``progress_interval`` seconds, e.g. to print a progress line.
+        self.progress = progress
+        self.progress_interval = progress_interval
         self._clock = clock
         self.totals = dict.fromkeys(TOTALS, 0)
         self._stopping = False
@@ -87,7 +92,10 @@ class Crawler:
 
     def _beat(self) -> None:
         self.store.renew(self.owner, self.lease)
-        stats = self.observer.snapshot() if self.observer is not None else None
+        stats = None
+        if self.observer is not None:
+            self.observer.frontier = self.store.counts()
+            stats = self.observer.snapshot()
         self.store.heartbeat(self.owner, stats)
 
     async def run(self, max_items: Optional[int] = None) -> dict:
@@ -101,7 +109,9 @@ class Crawler:
         tasks: dict[asyncio.Task, Item] = {}
         buffer: list[Outcome] = []
         finished = 0
-        last_flush = last_beat = self._clock()
+        last_flush = last_beat = last_progress = self._clock()
+        if self.observer is not None:
+            self.observer.frontier = store.counts()
         try:
             while True:
                 budget = None if max_items is None else max_items - finished - len(tasks) - len(ready)
@@ -136,6 +146,11 @@ class Crawler:
                 if now - last_beat >= self.heartbeat:
                     self._beat()
                     last_beat = now
+                if self.progress is not None and now - last_progress >= self.progress_interval:
+                    if self.observer is not None:
+                        self.observer.frontier = store.counts()
+                    self.progress()
+                    last_progress = now
         finally:
             for task in tasks:
                 task.cancel()
@@ -146,6 +161,8 @@ class Crawler:
                     buffer.append(task.result())
             try:
                 self._flush(buffer)
+                if self.observer is not None:
+                    self.observer.frontier = store.counts()
             finally:
                 store.unregister(self.owner)  # hands back anything still leased
         return dict(self.totals)

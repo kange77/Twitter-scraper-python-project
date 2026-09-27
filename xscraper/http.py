@@ -219,6 +219,7 @@ class HttpClient:
         sleep: Callable[[float], None] = time.sleep,
         clock: Callable[[], float] = time.time,
         pool_size: int = 10,
+        observer=None,
     ):
         if session is None:
             session = requests.Session()
@@ -244,6 +245,8 @@ class HttpClient:
         self._proxies = itertools.cycle(proxies) if proxies else None
         self._proxy_lock = threading.Lock()
         self._sleep = sleep
+        # Optional: gets on_response(status, seconds, error), on_retry(), on_wait(kind, seconds).
+        self.observer = observer
 
     def _next_proxy(self) -> Optional[dict]:
         if not self._proxies:
@@ -255,25 +258,38 @@ class HttpClient:
     def _enter_gate(self) -> None:
         # Jitter so paused workers don't all fire at the same instant.
         while (wait := self.gate.enter()) > 0:
-            self._sleep(min(wait, self.max_backoff) + random.uniform(0, GATE_JITTER))
+            wait = min(wait, self.max_backoff) + random.uniform(0, GATE_JITTER)
+            if self.observer is not None:
+                self.observer.on_wait("server", wait)
+            self._sleep(wait)
 
     def get(self, url: str, params: Optional[dict] = None, headers: Optional[dict] = None) -> requests.Response:
         last_error = "no attempts made"
+        obs = self.observer
         for attempt in range(self.retries + 1):
-            self.limiter.acquire()
+            wait = self.limiter.reserve()
+            if wait > 0:
+                if obs is not None:
+                    obs.on_wait("rate_limit", wait)
+                self._sleep(wait)
             self._enter_gate()
             resp = None
             server_wait = None
+            started = time.monotonic()
             try:
                 resp = self.session.get(url, params=params, headers=headers,
                                         timeout=self.timeout, proxies=self._next_proxy())
             except (requests.ConnectionError, requests.Timeout) as exc:
                 self.gate.leave()
                 last_error = f"{type(exc).__name__}: {exc}"
+                if obs is not None:
+                    obs.on_response(None, time.monotonic() - started, type(exc).__name__)
             except BaseException:
                 self.gate.leave()
                 raise
             else:
+                if obs is not None:
+                    obs.on_response(resp.status_code, time.monotonic() - started)
                 server_wait = self.gate.leave(resp.status_code, resp.headers)
                 error = classify(resp.status_code, url)
                 if error is None:
@@ -281,6 +297,8 @@ class HttpClient:
                 last_error = error
             if attempt == self.retries:
                 break
+            if obs is not None:
+                obs.on_retry()
             if server_wait is not None:
                 # The gate now holds every request, this one included, until the reset.
                 log.warning("%s on %s; pausing requests for %.1fs (retry %d/%d)", last_error, url,

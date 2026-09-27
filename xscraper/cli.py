@@ -23,6 +23,7 @@ from .parse import ParseError
 from .crawl import Crawler
 from .metrics import AdaptiveLimit, Metrics
 from .shared import SharedRateGate, SharedRateLimiter
+from .watch import JsonlSink, WatchStore, Watcher, WebhookSink, parse_duration
 from .jobs import TWEET, USER, Item, JobStore, parse_follow
 from . import scraper as _scraper_mod
 from .scraper import Scraper, parse_screen_name, parse_tweet_id
@@ -30,6 +31,8 @@ from .storage import FORMATS, TweetWriter, export, load
 
 # Tweets are analysed and written in chunks of this size while a batch streams in.
 CHUNK = 500
+# Polling a profile more often than this gains nothing (X caches the widget) and costs budget.
+MIN_WATCH_INTERVAL = 60.0
 
 
 def _have_aiohttp() -> bool:
@@ -129,6 +132,32 @@ def build_parser() -> argparse.ArgumentParser:
     _add_network_args(p)
     # The job remembers its rate; --rate changes it for every process on the job.
     p.set_defaults(rate=None)
+
+    p = sub.add_parser("watch", help="poll profiles and tweets on a schedule and report what changed",
+                       description="Keeps polling its targets and emits new / edited / deleted / "
+                                   "engagement events. State lives in STATE.db, so a watch can be "
+                                   "stopped and restarted; targets given once are remembered.")
+    p.add_argument("state", metavar="STATE.db")
+    p.add_argument("targets", nargs="*", metavar="TARGET",
+                   help="@name or profile URL to poll its timeline; tweet ID or URL to poll that tweet")
+    p.add_argument("--every", default="15m",
+                   help=f"poll interval for the given targets (default 15m, minimum {MIN_WATCH_INTERVAL:.0f}s)")
+    p.add_argument("--track", default="0", metavar="DURATION",
+                   help="re-check each new tweet by ID for this long (e.g. 48h) to catch edits, deletions "
+                        "and engagement changes; costs one request per tracked tweet per --recheck")
+    p.add_argument("--recheck", metavar="DURATION", help="re-check interval for tracked tweets (default --every)")
+    p.add_argument("--engagement-change", type=float, metavar="PCT",
+                   help="emit an engagement event when a count moves by PCT percent")
+    p.add_argument("--events", metavar="FILE", help="append events to FILE as JSON Lines")
+    p.add_argument("--webhook", metavar="URL",
+                   help="POST events to URL as {\"events\": [...]}; undelivered events are retried")
+    p.add_argument("--once", action="store_true", help="poll what's due once and exit")
+    p.add_argument("--unwatch", action="store_true", help="stop watching the given targets and exit")
+    p.add_argument("--status", action="store_true", help="show targets and counts and exit")
+    p.add_argument("--history", metavar="TWEET_ID", help="print a tweet's engagement history and exit")
+    p.add_argument("--metrics-port", type=int, metavar="PORT",
+                   help="serve Prometheus /metrics, JSON /stats and /healthz on 127.0.0.1:PORT")
+    _add_network_args(p)
 
     p = sub.add_parser("job", help="inspect or manage a crawl job")
     p.add_argument("action", choices=("status", "retry", "export"),
@@ -440,8 +469,9 @@ def _seed(value: str) -> Item:
 def _share_limits(client, args) -> None:
     """Swap the client's rate limiter and gate for ones every process on the job shares."""
     kw = _client_kwargs(args)
-    client.limiter = SharedRateLimiter(args.job, kw["rate"], kw["burst"])
-    client.gate = SharedRateGate(args.job)
+    path = getattr(args, "job", None) or args.state
+    client.limiter = SharedRateLimiter(path, kw["rate"], kw["burst"])
+    client.gate = SharedRateGate(path)
 
 
 def _fetchers(args, stack: contextlib.AsyncExitStack, observer=None):
@@ -540,6 +570,98 @@ def cmd_crawl(args) -> int:
     return 1 if counts["failed"] else 0
 
 
+def _print_event(e) -> None:
+    who = f"@{e.screen_name} " if e.screen_name else ""
+    if e.type == "new":
+        detail = e.data["tweet"]["text"]
+    elif e.type == "edited":
+        detail = f"{e.data['old_text']!r} -> {e.data['text']!r}"
+    elif e.type == "deleted":
+        detail = e.data.get("last_text") or ""
+    elif e.type == "engagement":
+        detail = ", ".join(f"{k.replace('_count', 's')} {v['from']:,} -> {v['to']:,}"
+                           for k, v in e.data["change"].items())
+    else:
+        detail = ""
+    detail = " ".join(detail.split())
+    print(f"{e.type:<10} {who}{e.tweet_id}  {detail[:100]}")
+
+
+def cmd_watch(args) -> int:
+    with WatchStore(args.state) as store:
+        if args.history:
+            rows = store.history(parse_tweet_id(args.history))
+            if not rows:
+                print(f"no history for {args.history}", file=sys.stderr)
+                return 1
+            print("time                  likes   retweets   replies   quotes")
+            for ts, *counts in rows:
+                print(f"{time.strftime('%Y-%m-%d %H:%M:%S', time.gmtime(ts))}  "
+                      + "  ".join(f"{_count(c):>8}" for c in counts))
+            return 0
+        targets = [_seed(v) for v in args.targets]
+        if args.unwatch:
+            for t in targets:
+                if not store.remove_target(t.kind, t.key):
+                    print(f"not watched: {t.kind} {t.key}", file=sys.stderr)
+            return 0
+        every = parse_duration(args.every)
+        if every < MIN_WATCH_INTERVAL:
+            raise ValueError(f"--every must be at least {MIN_WATCH_INTERVAL:.0f}s")
+        for t in targets:
+            store.add_target(t.kind, t.key, every)
+        if args.status:
+            summary = store.summary()
+            now = time.time()
+            for kind, key, ev, next_due, err in store.targets():
+                due = "now" if next_due <= now else f"in {next_due - now:.0f}s"
+                print(f"{kind} {key}: every {ev:.0f}s, next poll {due}" + (f", last error: {err}" if err else ""))
+            print(f"tracked tweets: {summary['tracked']}; events: {summary['events']}; "
+                  f"undelivered to webhook: {summary['undelivered']}; snapshots: {summary['snapshots']}")
+            return 0
+        if not store.targets():
+            raise ValueError("nothing to watch: give @names or tweet IDs")
+        track_for = parse_duration(args.track)
+        recheck = parse_duration(args.recheck) if args.recheck else every
+        if track_for and recheck < MIN_WATCH_INTERVAL:
+            raise ValueError(f"--recheck must be at least {MIN_WATCH_INTERVAL:.0f}s")
+        sinks: list = []
+        if args.events:
+            sinks.append(JsonlSink(args.events))
+        if args.webhook:
+            sinks.append(WebhookSink(args.webhook, timeout=args.timeout))
+        metrics = Metrics()
+        server = metrics.serve(args.metrics_port) if args.metrics_port else None
+
+        def on_cycle(events) -> None:
+            for e in events:
+                _print_event(e)
+            sys.stdout.flush()
+
+        async def run() -> None:
+            async with contextlib.AsyncExitStack() as stack:
+                fetch_tweet, fetch_user = await _fetchers(args, stack, metrics)
+                watcher = Watcher(store, fetch_tweet, fetch_user, sinks=sinks, track_for=track_for,
+                                  recheck=recheck if track_for else None,
+                                  engagement_change=None if args.engagement_change is None
+                                  else args.engagement_change / 100,
+                                  concurrency=args.workers, observer=metrics)
+                await watcher.run(once=args.once, on_cycle=on_cycle)
+
+        try:
+            asyncio.run(run())
+        finally:
+            if server is not None:
+                server.shutdown()
+        if metrics.drift.alerts:
+            print("warning: payload drift suspected (" + ", ".join(sorted(metrics.drift.alerts))
+                  + "); X may have changed a payload shape", file=sys.stderr)
+        errors = [t for t in store.targets() if t[4]]
+        for kind, key, _, _, err in errors:
+            print(f"{kind} {key}: {err}", file=sys.stderr)
+    return 1 if errors else 0
+
+
 def _helper_main(args) -> None:
     """Entry point of an extra crawler process started by --processes."""
     logging.basicConfig(level=logging.WARNING - 10 * min(args.verbose, 2),
@@ -633,7 +755,7 @@ def cmd_job(args) -> int:
 
 
 COMMANDS = {"tweet": cmd_tweet, "thread": cmd_thread, "user": cmd_user, "crawl": cmd_crawl,
-            "job": cmd_job, "analyze": cmd_analyze, "bench": cmd_bench}
+            "watch": cmd_watch, "job": cmd_job, "analyze": cmd_analyze, "bench": cmd_bench}
 
 
 def main(argv: Optional[Sequence[str]] = None) -> int:

@@ -8,6 +8,9 @@
 - **High-throughput fetching.** With the `fast` extra, batches run on an asyncio client (aiohttp) that keeps hundreds of connections alive from one process: about 4,000 tweets/s against the local benchmark mock, versus about 700/s for the thread-pool path. Results stream to disk as they arrive, so memory stays flat for batches of any size.
 - **Resilient networking that follows the server's rate-limit signals.** Requests go through a token-bucket rate limiter. Every worker shares one budget built from `x-rate-limit-remaining` / `x-rate-limit-reset`, so when the window runs out new requests wait for the reset instead of drawing 429s, and a 429's `Retry-After` pauses all workers, not just the one that got it. Failed requests are retried with jittered exponential backoff. You can rotate through several proxies.
 - **Exports** to JSON, JSON Lines, CSV and an **incremental SQLite store**. Repeated scrapes against the same store only add new tweets.
+- **Resumable crawl jobs.** `xscraper crawl` keeps its frontier in a SQLite file. It never fetches a tweet twice, can follow reply parents, quotes and retweets outward from its seeds, retries failures later, and picks up where it stopped after a crash. Several processes can work on one job and share its rate budget.
+- **Built-in monitoring.** Crawls report progress, latency percentiles, status codes and rate-limit waits, as JSON or Prometheus metrics with a health check. Concurrency backs off by itself when X starts failing, and a drift alarm fires when parsed tweets suddenly lose their dates, authors or text, which usually means X changed a payload shape.
+- **Watch mode.** `xscraper watch` polls profiles and tweets on a schedule and reports new, edited and deleted tweets and engagement jumps, to a JSON Lines file or a webhook, with an engagement history per tweet.
 
 ```
 $ xscraper bench
@@ -53,7 +56,48 @@ xscraper analyze tweets.jsonl --engine wasm -o annotated.csv
 xscraper bench -n 50000
 ```
 
-Network options (available on `tweet`, `thread` and `user`):
+### Crawl jobs
+
+```bash
+# Seeds are tweet IDs/URLs or @profiles. Follow what they reply to, quote and
+# retweet, up to 3 links away. Progress is saved in crawl.db as it goes.
+xscraper crawl crawl.db @NASA 1834231234567890123 --follow all --depth 3 --rate 5
+
+# Interrupted? Run it again: it resumes. Add more seeds at any time.
+xscraper crawl crawl.db
+xscraper crawl crawl.db -i more_ids.txt
+
+# Split the work across 4 processes. They share the job's rate budget (--rate is
+# for the whole job and is remembered), so this adds CPU, not requests.
+xscraper crawl crawl.db --processes 4
+
+xscraper job status crawl.db           # progress, workers, recent failures
+xscraper job retry crawl.db            # requeue items that failed --max-attempts times
+xscraper job export crawl.db -o tweets.jsonl
+xscraper analyze crawl.db              # a job file is also a tweet store
+```
+
+Monitoring options for `crawl`: `--progress SECONDS` (progress line on stderr, default every 10 s), `--stats-file FILE` (a JSON snapshot kept current), `--metrics-port PORT` (`/metrics` for Prometheus, `/stats` as JSON and `/healthz`, which turns 503 when work is queued but nothing finishes for 5 minutes), and `--no-adaptive` to turn off the automatic concurrency back-off.
+
+### Watch mode
+
+```bash
+# Poll @NASA every 15 minutes and one tweet every hour. Re-check each new tweet
+# for 48 hours to catch edits, deletions and engagement jumps of 50% or more.
+xscraper watch watch.db @NASA --every 15m --track 48h --engagement-change 50 \
+    --events events.jsonl --webhook https://example.com/hooks/x
+
+xscraper watch watch.db 1834231234567890123 --every 1h
+xscraper watch watch.db --status               # targets, counts, undelivered events
+xscraper watch watch.db --history 1834231234567890123   # likes/retweets/replies/quotes over time
+xscraper watch watch.db @NASA --unwatch
+```
+
+Targets are remembered, so `xscraper watch watch.db` alone resumes the watch. Each event is a JSON object with `seq`, `time`, `type` (`new`, `edited`, `deleted`, `restored`, `engagement`), `tweet_id`, `screen_name`, `url` and details. Webhook events are kept in an outbox until the receiver answers 2xx, so a receiver that was down gets the backlog in order. The profile widget only shows recent tweets, so deletions are detected only for tweets re-checked by ID (`--track`), and each tracked tweet costs one request per `--recheck` interval.
+
+### Network options
+
+Network options (available on `tweet`, `thread`, `user`, `crawl` and `watch`):
 
 | Option | Default | Meaning |
 |---|---|---|
@@ -122,6 +166,22 @@ Each `Tweet` has `id`, `text` (with t.co links expanded), `created_at` (ISO 8601
 Exports got faster too: 50,000 tweets to JSON Lines went from ~31,000 to ~55,000 tweets/s, and to SQLite from ~21,000 to ~61,000 tweets/s (batched upserts).
 
 Against X itself the ceiling is the rate limit, not the client: set `--rate` to what you are allowed and raise `--workers` until it covers the network latency (rate × latency, plus headroom).
+
+Crawl jobs, on the same container and mock:
+
+| Scenario | Result |
+|---|---|
+| 5,000 tweets as a crawl job vs plain `tweet -o` | ~3,300 vs ~3,500 tweets/s: durability costs about 5% |
+| 20,000 tweets, `--processes` 1 / 2 / 4 | ~7–8.5 s / ~4 s / ~3.4 s |
+| 4 processes, `--rate 200`, 1,000 tweets | 5.1 s: the job-wide rate holds |
+| Mock that fails above 64 requests in flight, `--workers 256`, 3,000 tweets | adaptive: 7.7 s, 312 × 503; fixed: 19.2 s, 1,723 × 503 |
+| 2,000 seeds, `--follow all --depth 30` on a linked mock | 6,350 tweets, each fetched once |
+
+`benchmarks/mock_x.py` has `--overload N` (503s above N requests in flight) and `--links` (tweets reply to and quote each other) for these runs.
+
+## Maturity
+
+[docs/maturity.md](docs/maturity.md) lays out the five-tier ladder this project measures itself against, from a one-off script to a distributed, continuously running service, and where the line is on features built to get around X's access controls.
 
 ## How the WASM core works
 

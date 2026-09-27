@@ -18,10 +18,31 @@ Each tier assumes everything below it.
 
 ## Where xscraper sits
 
-**Tier 3 (as of PR #4).** It has the async engine, a server-driven shared rate
-budget, streaming export and a benchmark harness. What it lacks for tier 4:
-a run that crashes loses its progress, nothing follows replies or quotes
-beyond the single `thread` command, and the only visibility is log lines.
+Before this work it was at **tier 3** (PR #4): an async engine, a
+server-driven shared rate budget, streaming export and a benchmark harness.
+A crash lost a run's progress, nothing followed replies or quotes beyond the
+single `thread` command, and the only visibility was log lines.
+
+It now covers **tiers 4 and 5**:
+
+| Capability | Where |
+|---|---|
+| Persistent, deduplicated frontier with leases; resume after a crash | `xscraper/jobs.py`, `xscraper crawl` |
+| Failures retried with backoff, then parked as failed (`job retry`) | `JobStore.complete` |
+| Link following: reply parents, quotes, retweets, up to `--depth` | `jobs.links` |
+| Run statistics as JSON and Prometheus, `/healthz` | `xscraper/metrics.py` |
+| Adaptive (AIMD) concurrency | `metrics.AdaptiveLimit` |
+| Payload-drift alarm | `metrics.DriftMonitor` |
+| Several processes on one job, one job-wide rate budget and 429 pause | `xscraper/shared.py`, `crawl --processes` |
+| Scheduled monitoring with change events, engagement history, webhook outbox | `xscraper/watch.py`, `xscraper watch` |
+
+What it deliberately stops short of:
+
+* **Multi-host.** The frontier and rate budget live in one SQLite file, so
+  all workers run on one machine (or share one local volume). Going
+  multi-host means moving `JobStore` and `shared.py` onto a server database
+  such as Postgres or Redis; the lease protocol stays the same.
+* **Scale beyond the rate budget**, for the reasons below.
 
 ## Boundary
 

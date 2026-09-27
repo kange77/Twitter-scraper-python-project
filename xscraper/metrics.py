@@ -143,6 +143,7 @@ class Metrics:
         self.stored = 0
         self.queued = 0
         self.anomalies: Counter = Counter()
+        self.events: Counter = Counter()      # watch events by type
         self._buckets = [0] * (len(LATENCY_BUCKETS) + 1)
         self._latency_sum = 0.0
         self._latency_count = 0
@@ -193,6 +194,11 @@ class Metrics:
                 self.anomalies.update(symptoms)
             self.drift.observe(set(symptoms))
 
+    def watch_events(self, events: list) -> None:
+        with self._lock:
+            self.events.update(e.type for e in events)
+            self.last_progress = self._clock()
+
     # -- reading ---------------------------------------------------------
 
     def percentile(self, q: float) -> Optional[float]:
@@ -239,6 +245,7 @@ class Metrics:
                               if self._latency_count else None},
                 "concurrency_limit": round(self.limit.limit, 1) if self.limit else None,
                 "anomalies": dict(self.anomalies),
+                "events": dict(self.events),
                 "drift_alerts": sorted(self.drift.alerts),
                 "frontier": self.frontier,
             }
@@ -285,6 +292,8 @@ class Metrics:
         metric("xscraper_tweets_stored_total", "counter", "New tweets stored.", [({}, s["tweets_stored"])])
         metric("xscraper_links_queued_total", "counter", "Links discovered and queued.",
                [({}, s["links_queued"])])
+        metric("xscraper_watch_events_total", "counter", "Watch events emitted, by type.",
+               [({"type": k}, v) for k, v in sorted(s["events"].items())])
         metric("xscraper_payload_anomalies_total", "counter", "Parsed items showing signs of payload drift.",
                [({"symptom": k}, v) for k, v in sorted(s["anomalies"].items())])
         metric("xscraper_drift_alert", "gauge", "1 while a drift symptom is above its threshold.",

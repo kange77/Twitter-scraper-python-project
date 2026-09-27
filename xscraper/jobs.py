@@ -50,7 +50,7 @@ CREATE TABLE IF NOT EXISTS frontier (
     last_error TEXT,
     updated REAL,
     PRIMARY KEY (kind, key));
-CREATE INDEX IF NOT EXISTS frontier_state ON frontier(state, not_before);
+CREATE INDEX IF NOT EXISTS frontier_queue ON frontier(state, depth);
 CREATE INDEX IF NOT EXISTS frontier_owner ON frontier(lease_owner) WHERE state = 'leased';
 CREATE TABLE IF NOT EXISTS workers (
     id TEXT PRIMARY KEY,
@@ -206,10 +206,16 @@ class JobStore:
             return []
         now = self._clock()
         with self._tx():
+            # Expired leases first (their worker died), then the shallowest queued
+            # items. Both queries walk the frontier_queue (state, depth) index instead of sorting
+            # the whole frontier, which matters once it holds millions of rows.
             rows = self.conn.execute(
-                """SELECT rowid, kind, key, depth FROM frontier
-                   WHERE (state = 'pending' AND not_before <= ?) OR (state = 'leased' AND lease_until < ?)
-                   ORDER BY depth, rowid LIMIT ?""", (now, now, limit)).fetchall()
+                "SELECT rowid, kind, key, depth FROM frontier WHERE state = 'leased' AND lease_until < ? "
+                "LIMIT ?", (now, limit)).fetchall()
+            if len(rows) < limit:
+                rows += self.conn.execute(
+                    "SELECT rowid, kind, key, depth FROM frontier WHERE state = 'pending' AND not_before <= ? "
+                    "ORDER BY depth LIMIT ?", (now, limit - len(rows))).fetchall()
             self.conn.executemany(
                 "UPDATE frontier SET state = 'leased', lease_owner = ?, lease_until = ?, updated = ? "
                 "WHERE rowid = ?", [(owner, now + lease, now, r[0]) for r in rows])

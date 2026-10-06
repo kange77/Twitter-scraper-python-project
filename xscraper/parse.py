@@ -183,10 +183,12 @@ def parse_tweet_result(data: Any) -> Optional[Tweet]:
         return None
     if not isinstance(data, dict):
         raise ParseError(f"unexpected tweet-result payload: {type(data).__name__}")
-    # ``__typename`` is normally a string, but a malformed payload can carry a
-    # list or dict there, which isn't hashable; treat it as an ordinary tweet.
     typename = data.get("__typename")
-    if (isinstance(typename, str) and typename in _UNAVAILABLE_TYPES) or "tombstone" in data:
+    if typename is not None and not isinstance(typename, str):
+        # Seen as a list or dict in fuzzed payloads. We can't tell whether this
+        # is a tweet or a tombstone, so fail it rather than store a blank tweet.
+        raise ParseError(f"unexpected __typename in tweet-result payload: {type(typename).__name__}")
+    if typename in _UNAVAILABLE_TYPES or "tombstone" in data:
         return None
     return parse_tweet(data, source="syndication-tweet")
 

@@ -169,7 +169,7 @@ def test_cli_async_batch_survives_poisoned_payload(tweet_results, endpoints, tmp
 
     async def handler(request):
         if request.query["id"] == "666":
-            return web.json_response({"__typename": ["Tweet"], "text": "?"})
+            return web.json_response({"__typename": ["Tweet"], "id_str": "666"})
         return await base_handler(request)
 
     out = tmp_path / "out.jsonl"
@@ -181,5 +181,5 @@ def test_cli_async_batch_survives_poisoned_payload(tweet_results, endpoints, tmp
                                                   "--rate", "100", "-o", str(out)])
 
     assert serve({"/tweet-result": handler}, test) == 1
-    assert "failed: 666: " in capsys.readouterr().err
+    assert "failed: 666: tweet 666: unexpected __typename" in capsys.readouterr().err
     assert [t.id for t in load(out)] == ["1834231000000000000", "1834231234567890123"]

@@ -133,14 +133,9 @@ def test_timeline_with_malformed_entries(timeline_html):
     assert [t.id for t in parse_timeline_page(page)] == ["9"]
 
 
-@pytest.mark.parametrize("typename", [["Tweet"], {"name": "TweetTombstone"}])
-def test_non_string_typename_is_an_ordinary_tweet(typename):
-    # An unhashable __typename used to raise TypeError on the membership test.
-    t = parse_tweet_result({"__typename": typename, "id_str": "1", "text": "hi"})
-    assert t.id == "1" and t.text == "hi"
-
-
-@pytest.mark.parametrize("typename", [["Tweet"], {"name": "Tweet"}])
-def test_non_string_typename_without_id_is_parse_error(typename):
-    with pytest.raises(ParseError):
-        parse_tweet_result({"__typename": typename, "text": "garbled"})
+@pytest.mark.parametrize("typename", [["Tweet"], {"name": "Tweet"}, ["TweetTombstone"]])
+def test_non_string_typename_is_parse_error(typename):
+    # The shape the QA fuzzer found: it used to raise TypeError (unhashable)
+    # and abort whole batches. It must not be stored as a blank tweet either.
+    with pytest.raises(ParseError, match="__typename"):
+        parse_tweet_result({"__typename": typename, "id_str": "900"})

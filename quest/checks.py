@@ -82,7 +82,7 @@ class Mock:
                     i = q["id"][0]
                     if i in POISON:
                         return self.send(200, json.dumps({"__typename": POISON[i], "id_str": i}))
-                    if i == "901":  # candidate B: reset sent in milliseconds instead of seconds
+                    if i == "5000":  # candidate B (outside the 1..1000 batch range): reset sent in milliseconds instead of seconds
                         return self.send(200, json.dumps(_embed(i)), headers=[
                             ("x-rate-limit-remaining", "0"),
                             ("x-rate-limit-reset", str(int(time.time() * 1000) + 60000))])
@@ -118,11 +118,13 @@ _RUNNER = (
 
 def run_cli(mock: Mock, src: str, args: list[str], timeout: float = 120) -> dict:
     mock.reset()
-    env = dict(os.environ, PYTHONPATH=os.path.abspath(src))
+    src = os.path.abspath(src)
+    env = dict(os.environ, PYTHONPATH=src)
     start = time.perf_counter()
     try:
         p = subprocess.run([sys.executable, "-c", _RUNNER, f"http://127.0.0.1:{mock.port}", *args],
-                           env=env, capture_output=True, text=True, timeout=timeout)
+                           env=env, cwd=src,  # `python -c` puts the cwd first on sys.path
+                           capture_output=True, text=True, timeout=timeout)
         code, err, out = p.returncode, p.stderr, p.stdout
     except subprocess.TimeoutExpired as exc:
         code, err, out = "timeout", (exc.stderr or b"").decode(), (exc.stdout or b"").decode()
@@ -148,6 +150,7 @@ def batch(mock: Mock, src: str, http: str, n: int, tmp: str) -> dict:
         "requests": r["requests"], "tweets_written": written,
         "ids_lost": n - poison - written,  # good tweets the run never delivered
         "failures_reported": err.count("failed: "),
+        "failure_lines": [line for line in err.splitlines() if line.startswith("failed: ")][:5],
         "traceback": "Traceback" in err,
         "stderr_tail": err.strip().splitlines()[-1:] if err.strip() else [],
     }
@@ -156,7 +159,7 @@ def batch(mock: Mock, src: str, http: str, n: int, tmp: str) -> dict:
 def candidates(mock: Mock, src: str, tmp: str) -> dict:
     res = {}
     # B: one x-rate-limit-reset in milliseconds (principal QA P2).
-    r = run_cli(mock, src, ["tweet", "901", "10", "11", "--workers", "1", "--http", "sync"], timeout=20)
+    r = run_cli(mock, src, ["tweet", "5000", "10", "11", "--workers", "1", "--http", "sync"], timeout=20)
     res["B_reset_in_ms"] = {"exit": r["exit"], "seconds": r["seconds"], "requests": r["requests"],
                             "tweets_printed": r["stdout"].count("/status/")}
     # C: refetching by ID erases counts the timeline had stored (principal QA P9).
@@ -190,7 +193,10 @@ def main() -> None:
     args = p.parse_args()
     mock = Mock()
     with tempfile.TemporaryDirectory() as tmp:
-        report = {"src": os.path.abspath(args.src), "python": sys.version.split()[0],
+        version = subprocess.run([sys.executable, "-c", "import xscraper; print(xscraper.__file__)"],
+                                 env=dict(os.environ, PYTHONPATH=os.path.abspath(args.src)),
+                                 cwd=os.path.abspath(args.src), capture_output=True, text=True).stdout.strip()
+        report = {"src": os.path.abspath(args.src), "imported": version, "python": sys.version.split()[0],
                   "synthetic_mock": True, "poison_ids": sorted(POISON, key=int)}
         for http in ("async", "sync"):
             report[f"clean_{http}"] = batch(mock, args.src, http, 400, tmp)  # IDs 1..400 hold no poison

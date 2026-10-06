@@ -160,3 +160,16 @@ def test_tweet_from_body_wraps_shape_errors(monkeypatch):
     with pytest.raises(ParseError, match="tweet 1834231234567890123") as info:
         scraper_mod.tweet_from_body("1834231234567890123", b'{"id_str": "1"}')
     assert isinstance(info.value.__cause__, TypeError)
+
+
+def test_tweet_from_body_leaves_other_errors_alone(monkeypatch):
+    # Only payload-shape errors become per-tweet failures; anything else
+    # (a bug, an interrupt) must still stop the run loudly.
+    from xscraper import scraper as scraper_mod
+
+    def broken(data):
+        raise RuntimeError("bug outside the payload")
+
+    monkeypatch.setattr(scraper_mod, "parse_tweet_result", broken)
+    with pytest.raises(RuntimeError):
+        scraper_mod.tweet_from_body("1", b'{"id_str": "1"}')

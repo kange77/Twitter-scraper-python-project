@@ -93,12 +93,12 @@ def test_tweet_batch_survives_poisoned_payload(monkeypatch, tweet_results, tmp_p
 
     def fake_get(self, url, params=None, headers=None):
         if params["id"] == "666":
-            return FakeResponse(200, json.dumps({"__typename": {"kind": "Tweet"}, "text": "?"}))
+            return FakeResponse(200, json.dumps({"__typename": {"kind": "Tweet"}, "id_str": "666"}))
         return FakeResponse(200, json.dumps(good[params["id"]]))
 
     monkeypatch.setattr(cli.HttpClient, "get", fake_get)
     out = tmp_path / "out.jsonl"
     ids = ["1834231000000000000", "666", "1834231234567890123"]
     assert cli.main(["tweet", *ids, "-o", str(out)]) == 1
-    assert "failed: 666: " in capsys.readouterr().err
+    assert "failed: 666: tweet 666: unexpected __typename" in capsys.readouterr().err
     assert [t.id for t in load(out)] == ["1834231000000000000", "1834231234567890123"]

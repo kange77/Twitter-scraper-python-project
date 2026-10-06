@@ -131,3 +131,16 @@ def test_timeline_with_malformed_entries(timeline_html):
                 {"type": "tweet", "content": {"tweet": {"id_str": "9", "full_text": "ok"}}}]}}}})
             + "</script>")
     assert [t.id for t in parse_timeline_page(page)] == ["9"]
+
+
+@pytest.mark.parametrize("typename", [["Tweet"], {"name": "TweetTombstone"}])
+def test_non_string_typename_is_an_ordinary_tweet(typename):
+    # An unhashable __typename used to raise TypeError on the membership test.
+    t = parse_tweet_result({"__typename": typename, "id_str": "1", "text": "hi"})
+    assert t.id == "1" and t.text == "hi"
+
+
+@pytest.mark.parametrize("typename", [["Tweet"], {"name": "Tweet"}])
+def test_non_string_typename_without_id_is_parse_error(typename):
+    with pytest.raises(ParseError):
+        parse_tweet_result({"__typename": typename, "text": "garbled"})

@@ -65,7 +65,13 @@ def tweet_from_body(tweet_id: str, body: bytes) -> Optional[Tweet]:
     except ValueError as exc:
         raise ParseError(f"tweet {tweet_id}: response was not JSON "
                          "(request blocked or endpoint changed)") from exc
-    return parse_tweet_result(data)
+    try:
+        return parse_tweet_result(data)
+    except (TypeError, AttributeError, KeyError, IndexError) as exc:
+        # The payload's shape is not what the parser expects. Fail this one
+        # tweet with a ParseError so batch callers report it and carry on.
+        raise ParseError(f"tweet {tweet_id}: unexpected payload shape "
+                         f"({type(exc).__name__}: {exc})") from exc
 
 
 def timeline_from_page(page: str, include_retweets: bool) -> list[Tweet]:

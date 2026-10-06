@@ -183,7 +183,10 @@ def parse_tweet_result(data: Any) -> Optional[Tweet]:
         return None
     if not isinstance(data, dict):
         raise ParseError(f"unexpected tweet-result payload: {type(data).__name__}")
-    if data.get("__typename") in _UNAVAILABLE_TYPES or "tombstone" in data:
+    # ``__typename`` is normally a string, but a malformed payload can carry a
+    # list or dict there, which isn't hashable; treat it as an ordinary tweet.
+    typename = data.get("__typename")
+    if (isinstance(typename, str) and typename in _UNAVAILABLE_TYPES) or "tombstone" in data:
         return None
     return parse_tweet(data, source="syndication-tweet")
 

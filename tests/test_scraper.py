@@ -147,3 +147,16 @@ def test_user_timelines_reports_each_failure(timeline_html):
 
     got = Scraper(FakeClient(handler), workers=4).user_timelines(["NASA", "nosuch", "bad name"])
     assert len(got[0]) == 3 and isinstance(got[1], NotFound) and isinstance(got[2], ValueError)
+
+
+def test_tweet_from_body_wraps_shape_errors(monkeypatch):
+    from xscraper import scraper as scraper_mod
+    from xscraper.parse import ParseError
+
+    def broken(data):
+        raise TypeError("unhashable type: 'list'")
+
+    monkeypatch.setattr(scraper_mod, "parse_tweet_result", broken)
+    with pytest.raises(ParseError, match="tweet 1834231234567890123") as info:
+        scraper_mod.tweet_from_body("1834231234567890123", b'{"id_str": "1"}')
+    assert isinstance(info.value.__cause__, TypeError)

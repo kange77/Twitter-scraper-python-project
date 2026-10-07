@@ -511,6 +511,9 @@ def cmd_crawl(args) -> int:
             follow=parse_follow(args.follow) if args.follow is not None else None,
             max_depth=args.depth, max_attempts=args.max_attempts, rate=args.rate)
         args.rate = cfg.rate
+        if store.expanded:
+            print(f"queued {store.expanded} links from items already crawled (wider --depth or --follow)",
+                  file=sys.stderr)
         added = store.add(seeds)
         if seeds:
             print(f"queued {added} new seeds ({len(seeds) - added} already in the job)", file=sys.stderr)

@@ -254,3 +254,24 @@ def test_unexpected_error_on_one_target_does_not_stop_the_others(store):
     assert sorted(t for _, t in types(events)) == ["1", "10", "11"]
     errors = {key: err for _, key, _, _, err in store.targets()}
     assert "TypeError" in errors["900"] and errors["10"] is None and errors["nasa"] is None
+
+
+def test_blank_response_is_not_a_deletion(store, clock):
+    # Senior review S4: bodies tweet, "", tweet used to emit new, deleted, restored.
+    from xscraper.scraper import tweet_from_body
+    from .test_crawl import FakeX
+    import json as _json
+    bodies = [_json.dumps({"__typename": "Tweet", "id_str": "7", "text": "hi",
+                           "user": {"id_str": "1", "screen_name": "nasa"}}).encode(), b"", b"  "]
+
+    async def fetch(key):
+        return tweet_from_body(key, bodies.pop(0))
+
+    store.add_target("tweet", "7", 60)
+    w = Watcher(store, fetch, FakeX().user)
+    assert types(run_cycle(w)) == [("new", "7")]
+    for _ in range(2):
+        clock.t += 61
+        assert run_cycle(w) == []
+    errors = {key: err for _, key, _, _, err in store.targets()}
+    assert "empty response" in errors["7"]

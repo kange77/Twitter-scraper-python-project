@@ -326,3 +326,45 @@ def test_unexpected_error_fails_one_item_not_the_crawl(job, exc):
     failures = {key: err for _, key, _, err in job.failures()}
     assert type(exc).__name__ in failures["103"]
     assert totals["failed"] == 2
+
+
+def _depths(job):
+    return dict(job.conn.execute("SELECT key, depth FROM frontier WHERE state != 'pending' OR 1"))
+
+
+# A -> C -> D -> E by reply, and B quotes D. With --depth 2, E is in scope
+# only through B (B 0, D 1, E 2).
+GRAPH = {"A": tweet("A", parent="C"), "B": tweet("B", quote="D"), "C": tweet("C", parent="D"),
+         "D": tweet("D", parent="E"), "E": tweet("E")}
+
+
+def _finish(job, key, depth):
+    return job.complete([Outcome(Item(TWEET, key, depth), [GRAPH[key]])])
+
+
+@pytest.mark.parametrize("order", [["A", "B", "C", "D"], ["A", "C", "D", "B"]])
+def test_depth_is_the_shortest_path_whatever_the_order(job, order):
+    # Principal QA P5: when B was late (e.g. one 503), D kept depth 2 from the
+    # A-C-D path and E was never queued.
+    job.configure(follow=("parents", "quotes"), max_depth=2)
+    job.add([Item(TWEET, "A"), Item(TWEET, "B")])
+    for key in order:
+        depth = _depths(job)[key]
+        _finish(job, key, depth)
+    assert _depths(job)["D"] == 1
+    assert _depths(job).get("E") == 2
+
+
+def test_raising_depth_expands_finished_items(tmp_path, capsys):
+    # Principal QA P6: `crawl job.db --depth 3` on a finished job did nothing.
+    with JobStore(tmp_path / "job.db") as job:
+        job.configure(follow=("parents",), max_depth=1)
+        job.add([Item(TWEET, "A")])
+        _finish(job, "A", 0)
+        _finish(job, "C", 1)
+        assert "D" not in _depths(job)
+        job.configure(max_depth=3)
+        assert job.expanded == 1
+        assert _depths(job)["D"] == 2 and job.counts()["pending"] == 1
+        job.configure(max_depth=3)  # unchanged settings re-expand nothing
+        assert job.expanded == 0

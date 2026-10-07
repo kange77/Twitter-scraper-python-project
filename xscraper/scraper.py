@@ -57,9 +57,15 @@ def tweet_params(tweet_id: str, lang: str) -> dict:
 
 
 def tweet_from_body(tweet_id: str, body: bytes) -> Optional[Tweet]:
-    """Parse a tweet-result response body; None when the tweet is unavailable."""
+    """Parse a tweet-result response body; None when the tweet is unavailable.
+
+    An empty body is not evidence that the tweet is gone (X answers deleted
+    tweets with 404 or a tombstone); it is a soft block or a glitch, so it
+    fails this attempt and may be retried. Treating it as "unavailable" made
+    watch mode report deletions that never happened.
+    """
     if not body.strip():
-        return None
+        raise ParseError(f"tweet {tweet_id}: empty response (soft block or endpoint glitch)")
     try:
         data = loads(body)
     except ValueError as exc:

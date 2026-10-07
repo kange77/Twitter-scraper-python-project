@@ -5,9 +5,12 @@ job.db`` and ``storage.load`` work on it) with a few extra tables:
 
 * ``frontier``: every tweet or profile the job has seen, keyed by
   (kind, key), with its state (pending, leased, done, missing, failed),
-  attempts, last error and how it was discovered. Seeds and links found
-  while crawling are inserted with ``INSERT OR IGNORE``, so nothing is
-  queued, or fetched, twice.
+  attempts, last error and how it was discovered. Nothing is queued, or
+  fetched, twice. An item's depth is the shortest path found to it so far,
+  whatever order paths arrive in: when a shorter one turns up for an item
+  already fetched, its stored links are expanded again without refetching,
+  so retries and concurrency don't change what a depth-limited crawl
+  collects.
 * ``workers``: one row per running crawler with a heartbeat. Items are
   *leased* to a worker for a limited time; if the worker dies, its leases
   expire (or are released as soon as its heartbeat goes stale) and another
@@ -150,6 +153,7 @@ class JobStore:
             raise ValueError(f"{path} is not an xscraper job ({exc})") from exc
         self.tweets = TweetStore(self.path, timeout=30.0)
         self.config = JobConfig.from_meta(self.meta())
+        self.expanded = 0  # links queued by the last configure() that widened the crawl
 
     # -- lifecycle -------------------------------------------------------
 
@@ -174,17 +178,26 @@ class JobStore:
     def configure(self, follow: Optional[tuple[str, ...]] = None, max_depth: Optional[int] = None,
                   max_attempts: Optional[int] = None, rate: Optional[float] = None) -> JobConfig:
         """Set whichever settings are given; the rest keep their stored values."""
-        cfg = self.config
+        old = cfg = self.config
         if rate is not None and rate <= 0:
             raise ValueError("rate must be positive")
         cfg = JobConfig(cfg.follow if follow is None else follow,
                         cfg.max_depth if max_depth is None else max_depth,
                         cfg.max_attempts if max_attempts is None else max(1, max_attempts),
                         cfg.rate if rate is None else rate)
+        self.expanded = 0
         with self._tx():
             self.conn.executemany("INSERT OR REPLACE INTO meta (key, value) VALUES (?, ?)",
                                   cfg.to_meta().items())
-        self.config = cfg
+            self.config = cfg
+            if cfg.max_depth > old.max_depth or set(cfg.follow) - set(old.follow):
+                # Links are computed when an item completes, so items finished
+                # under the narrower settings must be expanded again now, or a
+                # larger --depth (or a new link type) would silently do nothing.
+                now = self._clock()
+                done = self.conn.execute("SELECT key, depth FROM frontier WHERE kind = ? AND state = 'done' "
+                                         "AND depth < ?", (TWEET, cfg.max_depth)).fetchall()
+                self.expanded = self._queue([r for key, depth in done for r in self._links_of(key, depth, now)])
         return cfg
 
     # -- frontier --------------------------------------------------------
@@ -194,11 +207,43 @@ class JobStore:
         now = self._clock()
         rows = [(i.kind, i.key, i.depth, parent, now) for i in items]
         with self._tx():
-            before = self.conn.total_changes
-            self.conn.executemany(
-                "INSERT OR IGNORE INTO frontier (kind, key, depth, parent, updated) VALUES (?, ?, ?, ?, ?)",
-                rows)
-            return self.conn.total_changes - before
+            return self._queue(rows)
+
+    def _queue(self, rows: list[tuple]) -> int:
+        """Insert (kind, key, depth, parent, updated) rows inside a transaction; returns how many were new.
+
+        A row for a known item lowers its depth if the new path is shorter.
+        If that item is already done, its links are re-expanded from the
+        stored tweet at the new depth (and so on, transitively).
+        """
+        new = 0
+        while rows:
+            more = []
+            for kind, key, depth, parent, now in rows:
+                old = self.conn.execute("SELECT state, depth FROM frontier WHERE kind = ? AND key = ?",
+                                        (kind, key)).fetchone()
+                if old is None:
+                    self.conn.execute("INSERT INTO frontier (kind, key, depth, parent, updated) "
+                                      "VALUES (?, ?, ?, ?, ?)", (kind, key, depth, parent, now))
+                    new += 1
+                elif depth < old[1]:
+                    self.conn.execute("UPDATE frontier SET depth = ?, parent = ? WHERE kind = ? AND key = ?",
+                                      (depth, parent, kind, key))
+                    if old[0] == "done" and kind == TWEET:
+                        more += self._links_of(key, depth, now)
+            rows = more
+        return new
+
+    def _links_of(self, key: str, depth: int, now: float) -> list[tuple]:
+        """Frontier rows for the links of stored tweet ``key`` sitting at ``depth``."""
+        cfg = self.config
+        if depth + 1 > cfg.max_depth or not cfg.follow:
+            return []
+        row = self.conn.execute("SELECT data FROM tweets WHERE id = ?", (key,)).fetchone()
+        if row is None:
+            return []
+        tweet = Tweet.from_dict(json.loads(row[0]))
+        return [(TWEET, ref, depth + 1, key, now) for ref in links(tweet, cfg.follow)]
 
     def claim(self, owner: str, limit: int, lease: float = 300.0) -> list[Item]:
         """Lease up to ``limit`` ready items to ``owner``, shallowest first."""
@@ -298,13 +343,9 @@ class JobStore:
                 "lease_owner = NULL, lease_until = NULL, updated = ? WHERE kind = ? AND key = ?", retry_rows)
             self.conn.executemany(
                 "INSERT INTO frontier (kind, key, depth, parent, state, updated) VALUES (?, ?, ?, ?, 'done', ?) "
-                "ON CONFLICT (kind, key) DO UPDATE SET state = 'done', updated = excluded.updated "
-                "WHERE state = 'pending'", timeline_rows)
-            before = self.conn.total_changes
-            self.conn.executemany(
-                "INSERT OR IGNORE INTO frontier (kind, key, depth, parent, updated) VALUES (?, ?, ?, ?, ?)",
-                new_rows)
-            counts["queued"] = self.conn.total_changes - before
+                "ON CONFLICT (kind, key) DO UPDATE SET state = 'done', updated = excluded.updated, "
+                "depth = MIN(depth, excluded.depth) WHERE state = 'pending'", timeline_rows)
+            counts["queued"] = self._queue(new_rows)
         return counts
 
     def _attempts(self, item: Item) -> int:

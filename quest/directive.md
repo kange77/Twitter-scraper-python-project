@@ -69,6 +69,8 @@ All lines of [yardstick.md](yardstick.md) hold, with evidence linked in the appe
 | Handoff demonstration (self-performed) | [review/handoff-demo.md](review/handoff-demo.md) |
 | Pre-existing evidence (2026-09-29, unchanged copies) | [prior-work/xscraper-review.md](prior-work/xscraper-review.md) · [prior-work/principal-qa.md](prior-work/principal-qa.md) |
 | Loom outline | [loom-script.md](loom-script.md) |
+| Agent roles, rules and collaboration (optional) | [agents.md](agents.md) |
+| Lasting facts, decisions and gotchas for the flow (optional) | [memory.md](memory.md) |
 
 Commits on the branch, in order: `8d25838` yardstick, directive v1 and check script (thread agent) → `c004558` the fix as the **implementing agent** wrote it, unedited → `4181442` **review correction** → the docs commit after it.
 

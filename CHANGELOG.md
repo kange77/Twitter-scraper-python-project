@@ -40,8 +40,10 @@ regression test that fails on `claude/project-thread-jx0q4f`.
 ### Tests and CI
 - `tests/test_faults.py`: fault injection (SIGTERM on a 2-process CLI crawl,
   slow fetches against short leases, exit-status table, shared window).
-- `pytest-timeout` (60 s per test), CI `timeout-minutes: 20`, Python 3.13
-  in the matrix.
+- `pytest-timeout` (60 s per test).
+- Still to apply by hand: CI `timeout-minutes: 20` and Python 3.13 in the
+  matrix (`.github/workflows/ci.yml`). The token used to push this branch
+  can't change workflow files.
 
 ### Not fixed yet
 - P7 (JSONL sink loses events on a failed write), P8 (two watchers

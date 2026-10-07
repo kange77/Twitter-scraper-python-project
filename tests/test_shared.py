@@ -142,3 +142,30 @@ def test_cli_crawl_with_several_processes(tmp_path, monkeypatch):
     assert set(hits) == set(ids) and set(hits.values()) == {1}
     with JobStore(tmp_path / "job.db") as job:
         assert job.counts()["done"] == 300 and len(job.tweets) == 300
+
+
+def test_window_budget_is_shared_between_processes(tmp_path):
+    # Senior review S3: each process used to spend the whole
+    # x-rate-limit-remaining for itself, so N processes drew 429s.
+    now = [1000.0]
+    a = SharedRateGate(tmp_path / "job.db", clock=lambda: now[0])
+    b = SharedRateGate(tmp_path / "job.db", clock=lambda: now[0])
+    assert a.enter() == 0
+    a.leave(200, {"x-rate-limit-remaining": "3", "x-rate-limit-reset": "1010"})
+    assert [a.enter(), b.enter(), b.enter()] == [0, 0, 0]
+    assert a.enter() == pytest.approx(10) and b.enter() == pytest.approx(10)
+    now[0] = 1010  # new window: budget unknown until a response says
+    assert b.enter() == 0
+    a.close(), b.close()
+
+
+def test_old_job_files_get_the_window_columns(tmp_path):
+    import sqlite3
+    path = tmp_path / "old.db"
+    con = sqlite3.connect(path)
+    con.execute("CREATE TABLE rate_state (name TEXT PRIMARY KEY, tat REAL NOT NULL DEFAULT 0, "
+                "hold_until REAL NOT NULL DEFAULT 0)")
+    con.commit(), con.close()
+    gate = SharedRateGate(path)
+    assert gate.enter() == 0
+    gate.close()

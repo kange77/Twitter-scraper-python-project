@@ -223,8 +223,13 @@ class WatchStore:
                     continue
                 old_hash, old_text, state = row[0], row[1], row[2]
                 old_counts = list(row[3:7])
+                text = t.text
+                if not text and old_text:
+                    # A payload without text (the parser degrades it to "") isn't an
+                    # edit to an empty tweet; keep the last text, like missing counts.
+                    text, digest = old_text, old_hash
                 if digest != old_hash:
-                    events.append((now, "edited", t.id, name, {"old_text": old_text, "text": t.text}))
+                    events.append((now, "edited", t.id, name, {"old_text": old_text, "text": text}))
                 if state == "deleted":
                     events.append((now, "restored", t.id, name, {}))
                 # Counts X didn't report this time (None) keep their last known value.
@@ -242,7 +247,7 @@ class WatchStore:
                 self.conn.execute(
                     "UPDATE tracked SET last_checked = ?, state = 'live', text_hash = ?, text = ?, like_count = ?, "
                     "retweet_count = ?, reply_count = ?, quote_count = ?, screen_name = ?, baseline = ? "
-                    "WHERE tweet_id = ?", (now, digest, t.text, *merged, name, json.dumps(baseline), t.id))
+                    "WHERE tweet_id = ?", (now, digest, text, *merged, name, json.dumps(baseline), t.id))
             return self._record(events)
 
     def observe_missing(self, tweet_ids: Iterable[str]) -> list[Event]:

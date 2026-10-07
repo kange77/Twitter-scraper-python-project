@@ -289,3 +289,18 @@ def test_blank_response_is_not_a_deletion(store, clock):
         assert run_cycle(w) == []
     errors = {key: err for _, key, _, _, err in store.targets()}
     assert "empty response" in errors["7"]
+
+
+def test_payload_without_text_is_not_an_edit(store, clock):
+    # QA re-verification: a payload with an id but no text came back as
+    # text "" and fired `edited` twice (to "" and back).
+    x = FakeX([counted(5, 1, text="hello")])
+    store.add_target("tweet", "5", 60)
+    w = Watcher(store, x.tweet, x.user)
+    assert types(run_cycle(w)) == [("new", "5")]
+    x.tweets["5"] = counted(5, 1, text="")
+    clock.t += 61
+    assert run_cycle(w) == []
+    x.tweets["5"] = counted(5, 1, text="hello")
+    clock.t += 61
+    assert run_cycle(w) == []

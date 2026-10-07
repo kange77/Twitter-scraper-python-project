@@ -253,3 +253,43 @@ def test_never_seen_tweet_is_not_reported_deleted(tmp_path):
         store.add_target("tweet", "404", 60)
         events = asyncio.run(Watcher(store, FakeX().tweet, FakeX().user, track_for=3600).cycle())
         assert events == []
+
+
+def test_links_use_the_depth_lowered_while_the_item_was_in_flight(job):
+    # QA re-verification of P5: D is leased at depth 2 (via A-C) when B lowers
+    # it to 1; completing D must queue E at depth 2, not drop it at 3.
+    job.configure(follow=("parents", "quotes"), max_depth=2)
+    job.add([Item(TWEET, "A"), Item(TWEET, "B")])
+    _finish(job, "A", 0)
+    _finish(job, "C", 1)
+    (d,) = [i for i in job.claim("w", 10) if i.key == "D"]
+    assert d.depth == 2
+    _finish(job, "B", 0)  # the shorter path lands while D is in flight
+    job.complete([Outcome(d, [GRAPH["D"]])])
+    assert _depths(job).get("E") == 2
+
+
+@pytest.mark.skipif(not sys.platform.startswith("linux"), reason="/proc")
+def test_zombie_worker_is_reaped(job):
+    # QA re-verification: a crashed helper stays a zombie until joined, and
+    # kill(pid, 0) succeeds on zombies, so its leases sat idle for 60 s.
+    import socket
+    p = subprocess.Popen([sys.executable, "-c", "pass"])
+    deadline = time.monotonic() + 10
+    while time.monotonic() < deadline:  # exited but not waited for: a zombie
+        try:
+            with open(f"/proc/{p.pid}/stat", "rb") as f:
+                if f.read().rsplit(b")", 1)[1].split()[0] == b"Z":
+                    break
+        except OSError:
+            break
+        time.sleep(0.05)
+    owner = f"{socket.gethostname()}:{p.pid}:zombie"
+    job.register(owner)
+    job.conn.execute("UPDATE workers SET pid = ? WHERE id = ?", (p.pid, owner))
+    job.add([Item(TWEET, "1")])
+    job.claim(owner, 1)
+    try:
+        assert job.reap(stale_after=60) == 1
+    finally:
+        p.wait()

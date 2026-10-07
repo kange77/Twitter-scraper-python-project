@@ -369,8 +369,10 @@ def cmd_user(args) -> int:
             failures += 1
             continue
         if not got:
-            print(f"@{name}: no tweets returned (X serves this widget inconsistently; "
-                  "try again later or pass --cookies)", file=sys.stderr)
+            # The empty shell raises EmptyTimelineShell above; this is a page
+            # that really listed nothing, or one sent with cookies X didn't accept.
+            hint = "check that the cookies are a current session" if args.cookies else "try again later"
+            print(f"@{name}: no tweets returned (the profile may have none; {hint})", file=sys.stderr)
         tweets.extend(got[:args.limit] if args.limit else got)
     _finish(tweets, args, args.analyze)
     return 1 if failures else 0

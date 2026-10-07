@@ -30,6 +30,17 @@ class ParseError(ValueError):
     pass
 
 
+class EmptyTimelineShell(ParseError):
+    """X sent the profile widget's empty shell instead of a timeline.
+
+    Seen live on 2026-10-07: to a request without cookies the widget page said
+    the profile has tweets (``contextProvider.hasResults``) but listed no
+    entries; the same request 25 minutes later got 20. It's intermittent, so
+    callers treat it as a failed attempt that may be retried, not as an empty
+    timeline.
+    """
+
+
 def _d(value: Any) -> dict:
     """``value`` if it's a dict, else {}; payload fields can change type without notice."""
     return value if isinstance(value, dict) else {}
@@ -203,16 +214,25 @@ def extract_next_data(page: str) -> dict:
         raise ParseError(f"invalid __NEXT_DATA__ JSON: {exc}") from exc
 
 
-def parse_timeline_page(page: str) -> list[Tweet]:
+def parse_timeline_page(page: str, logged_in: bool = False) -> list[Tweet]:
     """Parse the profile-timeline widget HTML into tweets (newest first).
 
     The widget lists a pinned tweet first whatever its age, so entries are
-    re-sorted by ID, which X assigns in time order.
+    re-sorted by ID, which X assigns in time order. Raises ``EmptyTimelineShell``
+    when a request sent without cookies (``logged_in=False``) got the empty
+    shell, so callers don't report it as an empty timeline.
     """
     data = extract_next_data(page)
-    timeline = _d(_d(_d(data).get("props")).get("pageProps")).get("timeline")
+    props = _d(_d(_d(data).get("props")).get("pageProps"))
+    entries = _l(_d(props.get("timeline")).get("entries"))
+    if (not entries and not logged_in
+            and _d(props.get("contextProvider")).get("hasResults") is True):
+        raise EmptyTimelineShell(
+            "X returned an empty timeline page, which it does intermittently for logged-out "
+            "clients; retry later, or pass your own session cookies with --cookies or "
+            "$XSCRAPER_COOKIES for reliable results")
     tweets = []
-    for entry in _l(_d(timeline).get("entries")):
+    for entry in entries:
         if _d(entry).get("type") != "tweet":
             continue
         raw = _d(entry.get("content")).get("tweet")

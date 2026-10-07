@@ -278,6 +278,11 @@ class HttpClient:
         # Optional: gets on_response(status, seconds, error), on_retry(), on_wait(kind, seconds).
         self.observer = observer
 
+    @property
+    def logged_in(self) -> bool:
+        """True when requests carry cookies (see ``parse.EmptyTimelineShell``)."""
+        return bool(self.session.headers.get("Cookie") or self.session.cookies)
+
     def _next_proxy(self) -> Optional[dict]:
         if not self._proxies:
             return None

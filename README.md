@@ -2,7 +2,7 @@
 
 `xscraper` fetches public tweets from X (Twitter) and analyses them with a Rust core compiled to **WebAssembly**. The core runs in-process through [wasmtime](https://pypi.org/project/wasmtime/).
 
-- **No login or API keys.** It uses X's syndication endpoints, the ones behind embedded tweets and profile widgets, so it doesn't break every time x.com's frontend changes.
+- **No API keys.** It uses X's syndication endpoints, the ones behind embedded tweets and profile widgets, so it doesn't break every time x.com's frontend changes. Tweets by ID need no login. Profile timelines work logged out, but X intermittently returns an empty page for them (see [Empty profile timelines](#empty-profile-timelines)).
 - **WASM analytics, 15–20× faster than pure Python.** The core extracts hashtags, mentions, cashtags and URLs, scores sentiment, and computes SimHash fingerprints for near-duplicate detection.
 - **Works without WASM too.** A pure-Python port gives identical results. It is fuzz-tested against the WASM build, so installing wasmtime is optional. Both engines share one generated Unicode table, so hashtags in scripts with combining marks (Hindi, Tamil, Thai, …) come out whole.
 - **High-throughput fetching.** With the `fast` extra, batches run on an asyncio client (aiohttp) that keeps hundreds of connections alive from one process: about 4,000 tweets/s against the local benchmark mock, versus about 700/s for the thread-pool path. Results stream to disk as they arrive, so memory stays flat for batches of any size.
@@ -56,6 +56,19 @@ xscraper analyze tweets.jsonl --engine wasm -o annotated.csv
 xscraper bench -n 50000
 ```
 
+### Empty profile timelines
+
+X sometimes answers a logged-out request for a profile with an empty timeline page: it says the profile has tweets but lists none. On 2026-10-07 the same request for @NASA got that page once and 20 tweets 25 minutes later. `xscraper` recognises that page and reports it as a failed fetch instead of an empty result:
+
+```
+$ xscraper user NASA
+@NASA: X returned an empty timeline page, which it does intermittently for logged-out clients; retry later, or pass your own session cookies with --cookies or $XSCRAPER_COOKIES for reliable results
+```
+
+The exit code is 1. In `crawl`, a profile that gets this page is retried later with back-off like any failed item; after `--max-attempts` it is parked as failed (`xscraper job retry` requeues it), and it is never recorded as done with 0 tweets. In `watch`, it's recorded as that target's error (`--status` shows it) and the next cycle polls again. Tweets fetched by ID are unaffected.
+
+For reliable timelines, copy the `Cookie` header from your own logged-in x.com session in a browser and pass it with `--cookies` or `$XSCRAPER_COOKIES`. Keep it private: it is your login. If the page is still empty with cookies, `xscraper` says `no tweets returned` and suggests checking that the session is current.
+
 ### Crawl jobs
 
 ```bash
@@ -106,7 +119,7 @@ Network options (available on `tweet`, `thread`, `user`, `crawl` and `watch`):
 | `--workers` | `4` | Requests in flight at once for batches and multiple profiles |
 | `--http` | `auto` | `async` (needs the `fast` extra), `sync` (thread pool), or `auto`: async when aiohttp is installed |
 | `--proxy URL` | none | Proxy to use; repeat the option to rotate through several |
-| `--cookies` | `$XSCRAPER_COOKIES` | Cookie header to send, for when the profile widget comes back empty |
+| `--cookies` | `$XSCRAPER_COOKIES` | Cookie header from your own logged-in session, for when X returns empty profile timelines (see above) |
 | `--timeout` | `20` | Request timeout in seconds |
 
 The old `python "twitter scraper.py" <username>` command still works and runs `xscraper user`.
@@ -117,7 +130,7 @@ The old `python "twitter scraper.py" <username>` command still works and runs `x
 from xscraper import Analyzer, HttpClient, Scraper, export, near_duplicate_groups
 
 scraper = Scraper(HttpClient(rate=2, proxies=["http://proxy:8080"]))
-tweets = scraper.user_timeline("NASA")
+tweets = scraper.user_timeline("NASA")   # may raise parse.EmptyTimelineShell; retry later
 tweets += [t for t in scraper.tweets(["1834231234567890123", "20"]) if t]
 
 analyzer = Analyzer()            # "auto": WASM if wasmtime is installed, else Python
@@ -212,7 +225,7 @@ If you change the algorithm in `lib.rs`, make the same change in `xscraper/analy
 
 ## Limitations
 
-- **Coverage.** The syndication endpoints only serve public data. The profile widget returns a recent slice of a timeline, not the full history. X changes and restricts these endpoints from time to time. When the widget comes back empty, passing your own logged-in cookies via `--cookies` sometimes helps. Fetching individual tweets by ID is the most reliable mode.
+- **Coverage.** The syndication endpoints only serve public data. The profile widget returns a recent slice of a timeline, not the full history, and to logged-out clients it intermittently returns an empty page (your own cookies via `--cookies` make it reliable). X changes and restricts these endpoints from time to time. Fetching individual tweets by ID is the most reliable mode and needs no login.
 - **Retweet counts.** The per-tweet embed endpoint doesn't report retweet counts, so `retweet_count` is `None` for tweets fetched that way.
 - **Sentiment.** The sentiment model is a small English lexicon: fast and transparent, but not a replacement for a trained model.
 - **Test data.** The test fixtures are modelled on the syndication payload formats. They are not live captures, so the first thing to check if scraping stops working is whether X has changed a payload shape (see `xscraper/parse.py`).

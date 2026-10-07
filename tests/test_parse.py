@@ -1,6 +1,7 @@
 import pytest
 
-from xscraper.parse import ParseError, normalize_date, parse_timeline_page, parse_tweet_result
+from xscraper.parse import (EmptyTimelineShell, ParseError, normalize_date, parse_timeline_page,
+                            parse_tweet_result)
 
 
 def test_embed_tweet(tweet_results):
@@ -139,3 +140,36 @@ def test_non_string_typename_is_parse_error(typename):
     # and abort whole batches. It must not be stored as a blank tweet either.
     with pytest.raises(ParseError, match="__typename"):
         parse_tweet_result({"__typename": typename, "id_str": "900"})
+
+
+def test_logged_out_shell_is_login_required_not_empty(shell_html):
+    # X's empty shell says the profile has tweets but lists none.
+    with pytest.raises(EmptyTimelineShell, match="intermittently for logged-out clients; retry later.*--cookies"):
+        parse_timeline_page(shell_html)
+    assert issubclass(EmptyTimelineShell, ParseError)  # batch loops and crawls already handle it
+    # With cookies sent, the same page is just an empty answer.
+    assert parse_timeline_page(shell_html, logged_in=True) == []
+
+
+@pytest.mark.parametrize("page_props", [
+    {"timeline": {"entries": []}},                                        # no hasResults: unknown
+    {"contextProvider": {"hasResults": False}, "timeline": {"entries": []}},  # really empty
+    {"contextProvider": {"hasResults": "true"}, "timeline": {"entries": []}},
+])
+def test_empty_timeline_that_is_not_the_shell(page_props):
+    import json as _json
+    page = ('<script id="__NEXT_DATA__" type="application/json">'
+            + _json.dumps({"props": {"pageProps": page_props}}) + "</script>")
+    assert parse_timeline_page(page) == []
+
+
+def test_real_timeline_page_parses(live_timeline_html):
+    # Trimmed from a real logged-out response: the same request that sometimes
+    # gets the empty shell.
+    photo, reply = parse_timeline_page(live_timeline_html)
+    assert (photo.id, photo.created_at) == ("2107537933880177100", "2026-10-06T18:26:14Z")
+    assert photo.user.screen_name == "NASA" and photo.text.startswith("The Sun is always rising")
+    assert [m.type for m in photo.media] == ["photo"] and "t.co" not in photo.text
+    assert photo.urls == ["https://go.nasa.gov/4sa4mXf"]
+    assert reply.in_reply_to_id == "2107157581433131121" and reply.quoted_tweet_id is None
+    assert all(isinstance(t.like_count, int) for t in (photo, reply))

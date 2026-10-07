@@ -102,3 +102,17 @@ def test_tweet_batch_survives_poisoned_payload(monkeypatch, tweet_results, tmp_p
     assert cli.main(["tweet", *ids, "-o", str(out)]) == 1
     assert "failed: 666: tweet 666: unexpected __typename" in capsys.readouterr().err
     assert [t.id for t in load(out)] == ["1834231000000000000", "1834231234567890123"]
+
+
+def test_user_command_logged_out_shell(monkeypatch, shell_html, capsys):
+    monkeypatch.setattr(cli.HttpClient, "get", lambda self, url, params=None, headers=None:
+                        FakeResponse(200, shell_html))
+    monkeypatch.delenv("XSCRAPER_COOKIES", raising=False)
+    # Not "no tweets returned": the failure says why and what to do, and exits 1.
+    assert cli.main(["user", "NASA"]) == 1
+    err = capsys.readouterr().err
+    assert "@NASA: X returned an empty timeline page, which it does intermittently for logged-out clients" in err
+    assert "--cookies or $XSCRAPER_COOKIES" in err and "no tweets returned" not in err
+    # With a session the same page is just empty.
+    assert cli.main(["user", "NASA", "--cookies", "auth_token=x"]) == 0
+    assert "@NASA: no tweets returned" in capsys.readouterr().err

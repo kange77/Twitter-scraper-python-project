@@ -37,6 +37,19 @@ regression test that fails on `claude/project-thread-jx0q4f`.
 - **P6. `--depth`/`--follow` on an existing job.** Widening them re-expands
   items finished under the old settings.
 
+### Changed (live contract, 2026-10-07)
+- **Empty profile timeline pages.** To logged-out clients, X
+  intermittently answers the profile widget with an empty shell:
+  `hasResults` is true but `timeline.entries` is empty (seen once for @NASA
+  on 2026-10-07; the same request got 20 entries 25 minutes later).
+  `parse_timeline_page` raises the new `parse.EmptyTimelineShell` (a
+  `ParseError`) for that page when no cookies were sent. `xscraper user`
+  says so, suggests retrying or `--cookies` / `$XSCRAPER_COOKIES`, and
+  exits 1. A crawl retries such a profile with back-off and parks it after
+  `--max-attempts` (it used to be "done" with 0 tweets); watch records it
+  as the target's error. Clients expose `logged_in`. An empty page sent
+  with cookies, or one without `hasResults`, is still an empty result.
+
 ### Tests and CI
 - `tests/test_faults.py`: fault injection (SIGTERM on a 2-process CLI crawl,
   slow fetches against short leases, exit-status table, shared window).

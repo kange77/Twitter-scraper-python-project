@@ -100,6 +100,11 @@ class AsyncHttpClient:
         self._slots: Optional[asyncio.Semaphore] = None
 
     @property
+    def logged_in(self) -> bool:
+        """True when requests carry a Cookie header (see ``parse.EmptyTimelineShell``)."""
+        return "Cookie" in self.headers
+
+    @property
     def session(self) -> aiohttp.ClientSession:
         if self._session is None:
             connector = aiohttp.TCPConnector(limit=self.concurrency, ttl_dns_cache=300)
@@ -262,7 +267,7 @@ class AsyncScraper:
     async def user_timeline(self, screen_name: str, include_retweets: bool = True) -> list[Tweet]:
         name = parse_screen_name(screen_name)
         resp = await self.client.get(_sync.TIMELINE_ENDPOINT.format(name), params={"showReplies": "true"})
-        return timeline_from_page(resp.text, include_retweets)
+        return timeline_from_page(resp.text, include_retweets, getattr(self.client, "logged_in", False))
 
     async def user_timelines(self, screen_names: Iterable[str], include_retweets: bool = True) -> list:
         """Each profile's tweets (or the exception it raised), in input order."""

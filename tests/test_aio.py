@@ -192,3 +192,24 @@ def test_unknown_charset_falls_back_to_utf8():
     r = Response(200, "café".encode(), CIMultiDictProxy(CIMultiDict()), "x-bogus")
     assert r.text == "café"
     assert Response(200, "café".encode("latin-1"), CIMultiDictProxy(CIMultiDict()), "latin-1").text == "café"
+
+
+def test_cli_async_user_logged_out_shell(shell_html, endpoints, capsys):
+    seen = []
+
+    async def timeline(request):
+        seen.append(request.headers.get("Cookie"))
+        return web.Response(text=shell_html, content_type="text/html")
+
+    def run(*extra):
+        async def test(base, hits):
+            endpoints(base)
+            return await asyncio.to_thread(cli.main, ["user", "NASA", "--http", "async", "--rate", "100",
+                                                      *extra])
+        return serve({"/srv/{name}": timeline}, test)
+
+    assert run() == 1
+    assert "@NASA: X returned an empty timeline page, which it does intermittently for logged-out clients" in capsys.readouterr().err
+    assert run("--cookies", "auth_token=x") == 0
+    assert "@NASA: no tweets returned" in capsys.readouterr().err
+    assert seen == [None, "auth_token=x"]

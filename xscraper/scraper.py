@@ -84,8 +84,8 @@ def tweet_from_body(tweet_id: str, body: bytes) -> Optional[Tweet]:
                          f"({type(exc).__name__}: {exc})") from exc
 
 
-def timeline_from_page(page: str, include_retweets: bool) -> list[Tweet]:
-    tweets = parse_timeline_page(page)
+def timeline_from_page(page: str, include_retweets: bool, logged_in: bool = False) -> list[Tweet]:
+    tweets = parse_timeline_page(page, logged_in)
     if not include_retweets:
         tweets = [t for t in tweets if not t.is_retweet]
     return tweets
@@ -171,10 +171,15 @@ class Scraper:
         return list(reversed(chain))
 
     def user_timeline(self, screen_name: str, include_retweets: bool = True) -> list[Tweet]:
-        """Recent tweets from a profile, newest first."""
+        """Recent tweets from a profile, newest first.
+
+        Raises ``EmptyTimelineShell`` (a ``ParseError``) when X answers a request
+        without cookies with the widget's empty shell page.
+        """
         name = parse_screen_name(screen_name)
         resp = self.client.get(TIMELINE_ENDPOINT.format(name), params={"showReplies": "true"})
-        return timeline_from_page(resp.text, include_retweets)
+        # Clients that don't say whether they send cookies are taken as logged out.
+        return timeline_from_page(resp.text, include_retweets, getattr(self.client, "logged_in", False))
 
     def user_timelines(self, screen_names: Iterable[str], include_retweets: bool = True) -> list:
         """Timelines for several profiles fetched concurrently, in input order.

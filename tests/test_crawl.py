@@ -368,3 +368,37 @@ def test_raising_depth_expands_finished_items(tmp_path, capsys):
         assert _depths(job)["D"] == 2 and job.counts()["pending"] == 1
         job.configure(max_depth=3)  # unchanged settings re-expand nothing
         assert job.expanded == 0
+
+
+def test_cli_crawl_parks_profile_after_empty_shells(tmp_path, monkeypatch, shell_html, capsys):
+    from tests.conftest import FakeResponse
+    monkeypatch.setattr(cli.HttpClient, "get", lambda self, url, params=None, headers=None:
+                        FakeResponse(200, shell_html))
+    monkeypatch.delenv("XSCRAPER_COOKIES", raising=False)
+    path = tmp_path / "job.db"
+    # The empty shell is a failed attempt that counts toward --max-attempts, not "done, 0 tweets".
+    assert cli.main(["crawl", str(path), "@NASA", "--http", "sync", "--rate", "1000",
+                     "--max-attempts", "1"]) == 1
+    with JobStore(path) as job:
+        assert job.counts()["failed"] == 1 and job.counts()["done"] == 0
+        (kind, key, attempts, err), = job.failures()
+    assert (kind, key, attempts) == (USER, "NASA", 1)
+    assert err.startswith("EmptyTimelineShell: X returned an empty timeline page, "
+                          "which it does intermittently for logged-out clients")
+
+
+def test_empty_shell_is_retried_and_a_retry_can_succeed(job, shell_html, live_timeline_html):
+    from tests.conftest import FakeClient, FakeResponse
+    from xscraper.scraper import Scraper
+    pages = [shell_html, live_timeline_html]
+    scraper = Scraper(FakeClient(lambda url, params: FakeResponse(200, pages.pop(0))))
+
+    async def user(name):
+        return scraper.user_timeline(name)
+
+    job.configure(max_attempts=3)
+    job.add([Item(USER, "NASA")])
+    job._clock = _Clock(job._clock, step=10.0)  # skip the retry backoff
+    totals = asyncio.run(Crawler(job, FakeX().tweet, user, flush_interval=0.01).run())
+    assert totals["retry"] == 1 and totals["done"] == 1 and totals["failed"] == 0
+    assert totals["stored"] == 2 and not pages

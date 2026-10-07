@@ -222,6 +222,20 @@ def test_drift_is_checked_during_watch(store):
     assert m.snapshot()["events"] == {"new": 5}
 
 
+def test_logged_out_profile_is_a_target_error(store, shell_html):
+    from tests.conftest import FakeClient, FakeResponse
+    from xscraper.scraper import Scraper
+    scraper = Scraper(FakeClient(lambda url, params: FakeResponse(200, shell_html)))
+
+    async def user(name):
+        return scraper.user_timeline(name)
+
+    store.add_target("user", "NASA", 60)
+    assert run_cycle(Watcher(store, FakeX().tweet, user)) == []
+    [(_, _, _, _, err)] = store.targets()
+    assert err.startswith("EmptyTimelineShell:") and "--cookies" in err
+
+
 def test_cli_watch_flow(tmp_path, monkeypatch, capsys):
     x = FakeX([counted(5, 1)], timelines={"NASA": [counted(1, 10)]})
 

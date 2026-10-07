@@ -64,6 +64,11 @@ def test_proxy_rotation_and_cookies():
     assert c.session.headers["Cookie"] == "a=b"
 
 
+def test_logged_in_means_cookies_are_sent():
+    assert HttpClient(cookies="auth_token=x").logged_in
+    assert not HttpClient().logged_in
+
+
 def test_retry_after_parsing():
     assert retry_after_seconds(FakeResponse(429, headers={"Retry-After": "3"})) == 3
     assert retry_after_seconds(FakeResponse(429, headers={"x-rate-limit-reset": "1100"}), now=1000) == 100

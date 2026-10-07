@@ -4,6 +4,7 @@ import pytest
 
 from tests.conftest import FakeClient, FakeResponse
 from xscraper.http import NotFound
+from xscraper.parse import EmptyTimelineShell
 from xscraper.scraper import Scraper, parse_screen_name, parse_tweet_id
 from xscraper.token import syndication_token
 
@@ -173,3 +174,12 @@ def test_tweet_from_body_leaves_other_errors_alone(monkeypatch):
     monkeypatch.setattr(scraper_mod, "parse_tweet_result", broken)
     with pytest.raises(RuntimeError):
         scraper_mod.tweet_from_body("1", b'{"id_str": "1"}')
+
+
+def test_user_timeline_logged_out_shell(shell_html):
+    shell = lambda url, params: FakeResponse(200, shell_html)
+    with pytest.raises(EmptyTimelineShell):
+        Scraper(FakeClient(shell)).user_timeline("NASA")
+    assert Scraper(FakeClient(shell, logged_in=True)).user_timeline("NASA") == []
+    [got] = Scraper(FakeClient(shell)).user_timelines(["NASA"])
+    assert isinstance(got, EmptyTimelineShell)

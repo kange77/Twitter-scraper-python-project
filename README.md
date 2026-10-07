@@ -228,7 +228,7 @@ If you change the algorithm in `lib.rs`, make the same change in `xscraper/analy
 - **Coverage.** The syndication endpoints only serve public data. The profile widget returns a recent slice of a timeline, not the full history, and to logged-out clients it intermittently returns an empty page (your own cookies via `--cookies` make it reliable). X changes and restricts these endpoints from time to time. Fetching individual tweets by ID is the most reliable mode and needs no login.
 - **Retweet counts.** The per-tweet embed endpoint doesn't report retweet counts, so `retweet_count` is `None` for tweets fetched that way.
 - **Sentiment.** The sentiment model is a small English lexicon: fast and transparent, but not a replacement for a trained model.
-- **Test data.** The test fixtures are modelled on the syndication payload formats. They are not live captures, so the first thing to check if scraping stops working is whether X has changed a payload shape (see `xscraper/parse.py`).
+- **Test data.** Most test fixtures are modelled on the syndication payload formats. `tests/fixtures/live/` holds real tweet-result responses saved on 2026-10-07, and `tests/test_contract_live.py` checks the parser against them; `tests/fixtures/timeline_nasa_live.html` is a real profile page trimmed to 2 tweets. If scraping stops working, first check whether X has changed a payload shape (see `xscraper/parse.py`).
 
 ## Legal
 

@@ -1,0 +1,1 @@
+{"__typename":"TweetTombstone","tombstone":{"text":{"entities":[{"from_index":42,"ref":{"__typename":"TimelineUrl","url":"https://help.x.com/rules-and-policies/notices-on-x","url_type":"ExternalUrl"},"to_index":52}],"rtl":false,"text":"This Post was deleted by the Post author. Learn more"}}}

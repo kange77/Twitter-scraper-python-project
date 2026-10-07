@@ -57,6 +57,10 @@ regression test that fails on `claude/project-thread-jx0q4f`.
   with cookies, or one without `hasResults`, is still an empty result.
 
 ### Tests and CI
+- `tests/test_contract_live.py`: 8 real tweet-result responses saved on
+  2026-10-07 (`tests/fixtures/live/`: text, photos, video, media-only,
+  quote, reply, two HTTP 200 tombstones) parse with the right id, author,
+  date, text, media and reply/quote IDs. No parser bug found in them.
 - `tests/test_faults.py`: fault injection (SIGTERM on a 2-process CLI crawl,
   slow fetches against short leases, exit-status table, shared window).
 - `pytest-timeout` (60 s per test).
@@ -65,6 +69,12 @@ regression test that fails on `claude/project-thread-jx0q4f`.
   can't change workflow files.
 
 ### Not fixed yet
+- From the live payloads, left as is on purpose: `User.verified` is
+  `verified or is_blue_verified`, so a paid checkmark counts as verified
+  (changing it changes stored data; a separate field would be better);
+  timeline retweets carry the wrapper's own counts (0 likes), not the
+  original's; `edit_control` is not read (no model field for edits); a
+  withheld (DMCA) video still gets a `video_url`.
 - P7 (JSONL sink loses events on a failed write), P8 (two watchers
   double-deliver webhooks), P9 (store upsert erases counts), P10 (clock
   skew), S5 (edit detection), S8 (resume forgets `--workers`), S9 (late

@@ -178,9 +178,14 @@ def parse_tweet(t: Any, source: str = "") -> Tweet:
 
 
 def parse_tweet_result(data: Any) -> Optional[Tweet]:
-    """Parse the embed endpoint's JSON. Returns None for deleted/withheld/protected tweets."""
+    """Parse the embed endpoint's JSON. Returns None for deleted/withheld/protected tweets.
+
+    Only an explicit unavailable type or a tombstone means "unavailable". An
+    empty payload (``{}``, ``[]``, ``null``) says nothing about the tweet, so
+    it is an error that may be retried, never evidence of a deletion.
+    """
     if not data:
-        return None
+        raise ParseError(f"empty tweet-result payload: {data!r}")
     if not isinstance(data, dict):
         raise ParseError(f"unexpected tweet-result payload: {type(data).__name__}")
     typename = data.get("__typename")

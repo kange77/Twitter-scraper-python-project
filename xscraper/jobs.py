@@ -324,7 +324,9 @@ class JobStore:
                 continue
             state_rows.append(("done", None, None, now, it.kind, it.key))
             counts["done"] += 1
-            link_depth = it.depth + 1
+            # A shorter path may have lowered the item's depth while it was
+            # being fetched; links count from the depth it has now.
+            link_depth = min(it.depth, self._depth(it)) + 1
             for t in o.tweets:
                 if it.kind == USER:
                     # Timeline tweets are stored already and sit at the
@@ -347,6 +349,11 @@ class JobStore:
                 "depth = MIN(depth, excluded.depth) WHERE state = 'pending'", timeline_rows)
             counts["queued"] = self._queue(new_rows)
         return counts
+
+    def _depth(self, item: Item) -> int:
+        row = self.conn.execute("SELECT depth FROM frontier WHERE kind = ? AND key = ?",
+                                (item.kind, item.key)).fetchone()
+        return row[0] if row else item.depth
 
     def _attempts(self, item: Item) -> int:
         row = self.conn.execute("SELECT attempts FROM frontier WHERE kind = ? AND key = ?",
@@ -446,7 +453,13 @@ def _pid_alive(pid: Optional[int]) -> bool:
         return False
     except (PermissionError, OSError):
         return True
-    return True
+    # A crashed helper stays a zombie until its parent joins it, and kill(0)
+    # succeeds on a zombie. On Linux, /proc says so.
+    try:
+        with open(f"/proc/{pid}/stat", "rb") as f:
+            return f.read().rsplit(b")", 1)[1].split()[0] != b"Z"
+    except (OSError, IndexError):
+        return True
 
 
 class _Transaction:

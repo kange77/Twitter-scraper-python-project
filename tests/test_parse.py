@@ -28,7 +28,14 @@ def test_html_entities_unescaped(tweet_results):
 
 def test_tombstone_is_none(tweet_results):
     assert parse_tweet_result(tweet_results["tombstone"]) is None
-    assert parse_tweet_result({}) is None
+
+
+@pytest.mark.parametrize("payload", [{}, [], None, ""])
+def test_empty_payload_is_an_error_not_a_deletion(payload):
+    # QA re-verification: a 200 carrying {} / null / [] made watch mode emit
+    # deleted then restored, like the empty body of senior review S4.
+    with pytest.raises(ParseError, match="empty tweet-result payload"):
+        parse_tweet_result(payload)
 
 
 def test_unavailable_tweet_is_none():

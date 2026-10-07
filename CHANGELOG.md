@@ -34,6 +34,12 @@ regression test that fails on `claude/project-thread-jx0q4f`.
 - **P5. Order-dependent coverage.** An item's depth is the shortest path
   found. When a finished item gets a shorter path, its links are
   re-expanded from the stored tweet.
+- **QA re-verification follow-ups.** Links count from the depth an item has
+  when it completes, not when it was claimed (P5 with the item in flight). A
+  crashed helper left as a zombie is reaped instead of holding its leases
+  until its heartbeat goes stale. A 200 carrying `{}`, `[]` or `null` is an
+  error, not a deletion. A payload without text keeps the last known text
+  instead of firing `edited`.
 - **P6. `--depth`/`--follow` on an existing job.** Widening them re-expands
   items finished under the old settings.
 

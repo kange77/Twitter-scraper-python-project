@@ -581,19 +581,29 @@ def cmd_crawl(args) -> int:
             print("warning: payload drift suspected (" + ", ".join(sorted(metrics.drift.alerts))
                   + "); X may have changed a payload shape", file=sys.stderr)
         _print_job(store)
-        counts = store.counts()
-        for h in crashed:
-            print(f"error: crawler process {h.pid} exited with code {h.exitcode}; its work was handed back",
-                  file=sys.stderr)
-        left = counts["pending"] + counts["leased"]
-        if stopped:
-            print(f"stopped by signal with {left:,} items left; run `xscraper crawl {args.job}` to resume",
-                  file=sys.stderr)
-            return 128 + signal.SIGTERM
-        if left and args.max_items is None:
-            print(f"error: {left:,} items are still queued or leased; run `xscraper crawl {args.job}` to resume",
-                  file=sys.stderr)
-            return 1
+        return _crawl_exit(store.counts(), stopped, [(h.pid, h.exitcode) for h in crashed],
+                           args.max_items, args.job)
+
+
+def _crawl_exit(counts: dict, stopped: bool, crashed: list, max_items: Optional[int], job: str) -> int:
+    """The crawl's exit status; says why on stderr when it isn't a clean finish.
+
+    0 only when the job is finished and nothing failed. A crashed helper,
+    failed items, or items still queued or leased (unless --max-items cut
+    the run short on purpose) give 1; a SIGTERM stop gives 143.
+    """
+    for pid, code in crashed:
+        print(f"error: crawler process {pid} exited with code {code}; its work was handed back",
+              file=sys.stderr)
+    left = counts["pending"] + counts["leased"]
+    if stopped:
+        print(f"stopped by signal with {left:,} items left; run `xscraper crawl {job}` to resume",
+              file=sys.stderr)
+        return 128 + signal.SIGTERM
+    if left and max_items is None:
+        print(f"error: {left:,} items are still queued or leased; run `xscraper crawl {job}` to resume",
+              file=sys.stderr)
+        return 1
     return 1 if counts["failed"] or crashed else 0
 
 

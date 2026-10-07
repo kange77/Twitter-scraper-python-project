@@ -241,3 +241,16 @@ def test_cli_watch_flow(tmp_path, monkeypatch, capsys):
     with WatchStore(state) as s:
         assert [t[1] for t in s.targets()] == ["5"]
     assert cli.main(["watch", state, "@NASA", "--every", "10s"]) == 2
+
+
+def test_unexpected_error_on_one_target_does_not_stop_the_others(store):
+    # Principal QA P3: one poisoned tweet aborted every cycle, so no target
+    # was ever polled again.
+    from .test_crawl import PoisonX
+    x = PoisonX([tweet(10), tweet(11)], poison={"900"}, timelines={"nasa": [counted(1, 10)]})
+    for kind, key in (("tweet", "10"), ("tweet", "900"), ("tweet", "11"), ("user", "nasa")):
+        store.add_target(kind, key, 60)
+    events = run_cycle(Watcher(store, x.tweet, x.user))
+    assert sorted(t for _, t in types(events)) == ["1", "10", "11"]
+    errors = {key: err for _, key, _, _, err in store.targets()}
+    assert "TypeError" in errors["900"] and errors["10"] is None and errors["nasa"] is None

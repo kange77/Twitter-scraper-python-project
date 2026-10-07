@@ -166,8 +166,39 @@ def test_live_workers_keep_their_leases(job):
     job.add([Item(TWEET, t) for t in x.tweets])
     job.register("busy")
     job.claim("busy", 2)
-    crawl(job, x)
+    crawl(job, x, max_items=2)
     assert job.counts() == {"pending": 0, "leased": 2, "done": 2, "missing": 0, "failed": 0}
+    assert sum(x.calls.values()) == 2
+
+
+def test_crawl_does_not_finish_while_another_worker_holds_leases(job):
+    # S2: a resumed crawl used to exit 0 as soon as nothing was pending,
+    # stranding items leased to a worker that had died moments before.
+    x = FakeX(chain(4))
+    job.add([Item(TWEET, t) for t in x.tweets])
+    job.register("went-quiet")
+    job.claim("went-quiet", 2)
+    crawl(job, x, heartbeat=0.05, stale_after=0.3)
+    assert job.counts()["done"] == 4 and job.counts()["leased"] == 0
+
+
+def test_dead_local_process_is_reaped_without_waiting(job):
+    import subprocess
+    import sys
+    import time
+    p = subprocess.Popen([sys.executable, "-c", "pass"])
+    p.wait()  # its pid is now (almost certainly) free
+    x = FakeX(chain(3))
+    job.add([Item(TWEET, t) for t in x.tweets])
+    import socket
+    owner = f"{socket.gethostname()}:{p.pid}:dead00"  # same shape as new_worker_id()
+    job.register(owner)
+    job.conn.execute("UPDATE workers SET pid = ? WHERE id = ?", (p.pid, owner))
+    job.claim(owner, 3)
+    start = time.monotonic()
+    crawl(job, x)  # default stale_after is 60 s
+    assert job.counts()["done"] == 3
+    assert time.monotonic() - start < 5
 
 
 def test_two_crawlers_share_one_job(tmp_path):
@@ -255,3 +286,43 @@ def test_cli_crawl_no_run_stores_settings(tmp_path):
         assert job.counts()["pending"] == 2
     with sqlite3.connect(path) as conn:
         assert conn.execute("PRAGMA journal_mode").fetchone()[0] == "wal"
+
+
+class PoisonX(FakeX):
+    """Raises an exception nobody anticipated for some keys (S1/P1 class)."""
+
+    def __init__(self, *a, poison=(), exc=TypeError("unhashable type: 'list'"), **kw):
+        super().__init__(*a, **kw)
+        self.poison, self.exc = set(poison), exc
+
+    async def tweet(self, key):
+        if key in self.poison:
+            self.calls[key] += 1
+            raise self.exc
+        return await super().tweet(key)
+
+    async def user(self, name):
+        if name in self.poison:
+            self.calls["@" + name] += 1
+            raise self.exc
+        return await super().user(name)
+
+
+@pytest.mark.parametrize("exc", [TypeError("unhashable type: 'list'"), LookupError("unknown encoding: x-bogus"),
+                                 KeyError("data")])
+def test_unexpected_error_fails_one_item_not_the_crawl(job, exc):
+    # Senior review S1 / principal QA P1: one poisoned item used to end the
+    # run and stay at the head of the queue, so the job could never finish.
+    x = PoisonX(chain(6), poison={"103"}, exc=exc,
+                timelines={"nasa": [tweet(900)]})
+    x.poison.add("badcharset")
+    job.configure(max_attempts=1)
+    job.add([Item(TWEET, t) for t in x.tweets] + [Item(USER, "nasa"), Item(USER, "badcharset")])
+    totals = crawl(job, x)
+    counts = job.counts()
+    assert counts["failed"] == 2 and counts["done"] == 5 + 1 + 1  # 5 good tweets + profile + its tweet
+    assert counts["pending"] == counts["leased"] == 0
+    assert x.calls["103"] == 1  # parked after max_attempts instead of re-queued
+    failures = {key: err for _, key, _, err in job.failures()}
+    assert type(exc).__name__ in failures["103"]
+    assert totals["failed"] == 2

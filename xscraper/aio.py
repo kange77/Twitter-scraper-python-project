@@ -20,6 +20,7 @@ rotation behave exactly as in :class:`xscraper.http.HttpClient`.
 from __future__ import annotations
 
 import asyncio
+import codecs
 import itertools
 import logging
 import random
@@ -31,7 +32,7 @@ from typing import AsyncIterator, Awaitable, Callable, Iterable, Optional, Seque
 import aiohttp
 from multidict import CIMultiDict, CIMultiDictProxy
 
-from .http import (GATE_JITTER, USER_AGENTS, HttpError, NotFound, RateGate, RateLimiter, backoff_delay, classify,
+from .http import (USER_AGENTS, HttpError, NotFound, RateGate, RateLimiter, backoff_delay, classify, gate_sleep_time,
                    give_up)
 from .models import Tweet
 from .parse import ParseError
@@ -52,6 +53,13 @@ class Response:
 
     @property
     def text(self) -> str:
+        # The charset comes from the server's Content-Type; a mislabelled page
+        # (proxy, CDN, captive portal) must not raise LookupError here.
+        try:
+            codecs.lookup(self.encoding)
+        except LookupError:
+            log.warning("unknown charset %r in response; decoding as utf-8", self.encoding)
+            return self.content.decode("utf-8", errors="replace")
         return self.content.decode(self.encoding, errors="replace")
 
 
@@ -119,11 +127,13 @@ class AsyncHttpClient:
             # Checked after getting a slot, so requests queued behind a
             # rate-limit signal see it before they are sent.
             obs = self.observer
+            waited = 0.0
             while (wait := self.gate.enter()) > 0:
-                wait = min(wait, self.max_backoff) + random.uniform(0, GATE_JITTER)
+                wait = gate_sleep_time(self.gate, wait, waited, self.max_backoff, url)
                 if obs is not None:
                     obs.on_wait("server", wait)
                 await self._sleep(wait)
+                waited += wait
             proxy = next(self._proxies) if self._proxies else None
             started = time.monotonic()
             try:

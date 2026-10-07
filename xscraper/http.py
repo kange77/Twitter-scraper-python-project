@@ -40,6 +40,12 @@ USER_AGENTS = (
 RETRY_STATUSES = frozenset({408, 425, 429, 500, 502, 503, 504})
 # Spread (seconds) added to rate-limit pauses so waiting workers resume staggered.
 GATE_JITTER = 0.25
+# X's rate-limit windows are 15 minutes. A reset or Retry-After further away
+# than this is a malformed header (typically milliseconds sent as seconds),
+# not an instruction to stop for decades.
+MAX_RESET_HORIZON = 3600.0
+# Gate waits longer than this are logged at WARNING, so a long stall is visible.
+LONG_GATE_WAIT = 30.0
 
 
 class HttpError(RuntimeError):
@@ -145,7 +151,10 @@ class RateGate:
             now = self._clock()
             remaining = (headers.get("x-rate-limit-remaining") or "").strip()
             reset = (headers.get("x-rate-limit-reset") or "").strip()
-            if remaining.isdigit() and reset.isdigit() and float(reset) > now:
+            if remaining.isdigit() and reset.isdigit() and float(reset) - now > MAX_RESET_HORIZON:
+                log.warning("ignoring x-rate-limit-reset %s: %.0fs in the future (milliseconds?)",
+                            reset, float(reset) - now)
+            elif remaining.isdigit() and reset.isdigit() and float(reset) > now:
                 reset_at = float(reset)
                 # Requests still in flight will draw on what's left.
                 budget = int(remaining) - self.in_flight
@@ -164,21 +173,42 @@ def retry_after_seconds(resp, now: Optional[float] = None, reset_only: bool = Fa
     """Server-requested wait from Retry-After or x-rate-limit-reset, if any.
 
     ``resp`` may be a response or just its (case-insensitive) headers.
+    Waits beyond ``MAX_RESET_HORIZON`` are treated as malformed and ignored.
     """
     headers = getattr(resp, "headers", resp)
     now = time.time() if now is None else now
+    wait = None
     value = None if reset_only else headers.get("Retry-After")
     if value:
         if value.strip().isdigit():
-            return float(value)
-        try:
-            return max(0.0, email.utils.parsedate_to_datetime(value).timestamp() - now)
-        except (TypeError, ValueError):
-            pass
-    reset = headers.get("x-rate-limit-reset")
-    if reset and reset.strip().isdigit():
-        return max(0.0, float(reset) - now)
-    return None
+            wait = float(value)
+        else:
+            try:
+                wait = max(0.0, email.utils.parsedate_to_datetime(value).timestamp() - now)
+            except (TypeError, ValueError):
+                pass
+    if wait is None:
+        reset = headers.get("x-rate-limit-reset")
+        if reset and reset.strip().isdigit():
+            wait = max(0.0, float(reset) - now)
+    if wait is not None and wait > MAX_RESET_HORIZON:
+        log.warning("ignoring server-requested wait of %.0fs (malformed Retry-After/x-rate-limit-reset?)", wait)
+        return None
+    return wait
+
+
+def gate_sleep_time(gate: "RateGate", wait: float, waited: float, max_backoff: float, url: str) -> float:
+    """How long to sleep before asking the gate again; raises once one request has waited too long.
+
+    The cap is a safety net: whatever the headers said, a single request
+    never waits at the gate for more than twice the gate's ``max_wait``.
+    """
+    if waited >= 2 * gate.max_wait:
+        raise HttpError(f"gave up on {url}: waited {waited:.0f}s for the server's rate-limit window")
+    wait = min(wait, max_backoff, 2 * gate.max_wait - waited) + random.uniform(0, GATE_JITTER)
+    if wait >= LONG_GATE_WAIT:
+        log.warning("rate-limit window spent; waiting %.0fs before %s", wait, url)
+    return wait
 
 
 def classify(status: int, url: str) -> Optional[str]:
@@ -255,13 +285,15 @@ class HttpClient:
             proxy = next(self._proxies)
         return {"http": proxy, "https": proxy}
 
-    def _enter_gate(self) -> None:
+    def _enter_gate(self, url: str) -> None:
         # Jitter so paused workers don't all fire at the same instant.
+        waited = 0.0
         while (wait := self.gate.enter()) > 0:
-            wait = min(wait, self.max_backoff) + random.uniform(0, GATE_JITTER)
+            wait = gate_sleep_time(self.gate, wait, waited, self.max_backoff, url)
             if self.observer is not None:
                 self.observer.on_wait("server", wait)
             self._sleep(wait)
+            waited += wait
 
     def get(self, url: str, params: Optional[dict] = None, headers: Optional[dict] = None) -> requests.Response:
         last_error = "no attempts made"
@@ -272,7 +304,7 @@ class HttpClient:
                 if obs is not None:
                     obs.on_wait("rate_limit", wait)
                 self._sleep(wait)
-            self._enter_gate()
+            self._enter_gate(url)
             resp = None
             server_wait = None
             started = time.monotonic()

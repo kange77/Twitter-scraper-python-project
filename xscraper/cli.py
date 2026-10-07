@@ -9,6 +9,7 @@ import logging
 import math
 import os
 import random
+import signal
 import sys
 import time
 from collections import Counter
@@ -534,17 +535,26 @@ def cmd_crawl(args) -> int:
                 print(metrics.progress_line(), file=sys.stderr)
             _write_stats(args.stats_file, metrics)
 
+        crawler: Optional[Crawler] = None
+
         async def run() -> dict:
+            nonlocal crawler
             async with contextlib.AsyncExitStack() as stack:
                 fetch_tweet, fetch_user = await _fetchers(args, stack, metrics)
                 crawler = Crawler(store, fetch_tweet, fetch_user, concurrency=args.workers, limit=limit,
                                   observer=metrics, progress=progress,
                                   progress_interval=args.progress or 5.0)
-                return await crawler.run(max_items=args.max_items)
+                # SIGTERM (systemd, Docker, Kubernetes) stops the crawl like Ctrl-C:
+                # in-flight items finish, outcomes are flushed, leases handed back.
+                with _on_signal(signal.SIGTERM, crawler.stop):
+                    return await crawler.run(max_items=args.max_items)
 
         start = time.perf_counter()
         try:
             totals = asyncio.run(run())
+            if crawler is not None and crawler.stopped:
+                for h in helpers:
+                    h.terminate()  # they stop the same way: finish, flush, release
             for h in helpers:
                 h.join()
         finally:
@@ -556,6 +566,8 @@ def cmd_crawl(args) -> int:
         elapsed = time.perf_counter() - start
         if getattr(args, "quiet", False):
             return 0
+        stopped = crawler is not None and crawler.stopped
+        crashed = [h for h in helpers if h.exitcode not in (0, None) and not (stopped and h.exitcode == -signal.SIGTERM)]
         if helpers:
             print(f"{len(helpers) + 1} processes; totals below are this process's share", file=sys.stderr)
         items = totals["done"] + totals["missing"] + totals["failed"] + totals["retry"]
@@ -567,7 +579,34 @@ def cmd_crawl(args) -> int:
                   + "); X may have changed a payload shape", file=sys.stderr)
         _print_job(store)
         counts = store.counts()
-    return 1 if counts["failed"] else 0
+        for h in crashed:
+            print(f"error: crawler process {h.pid} exited with code {h.exitcode}; its work was handed back",
+                  file=sys.stderr)
+        left = counts["pending"] + counts["leased"]
+        if stopped:
+            print(f"stopped by signal with {left:,} items left; run `xscraper crawl {args.job}` to resume",
+                  file=sys.stderr)
+            return 128 + signal.SIGTERM
+        if left and args.max_items is None:
+            print(f"error: {left:,} items are still queued or leased; run `xscraper crawl {args.job}` to resume",
+                  file=sys.stderr)
+            return 1
+    return 1 if counts["failed"] or crashed else 0
+
+
+@contextlib.contextmanager
+def _on_signal(sig, callback):
+    """Call ``callback`` on ``sig`` while the block runs (inside a running event loop)."""
+    loop = asyncio.get_running_loop()
+    try:
+        loop.add_signal_handler(sig, callback)
+    except (NotImplementedError, RuntimeError, ValueError):  # Windows, or not the main thread
+        yield
+        return
+    try:
+        yield
+    finally:
+        loop.remove_signal_handler(sig)
 
 
 def _print_event(e) -> None:

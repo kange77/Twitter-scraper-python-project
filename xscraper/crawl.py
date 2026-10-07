@@ -59,10 +59,11 @@ class Crawler:
         self._clock = clock
         self.totals = dict.fromkeys(TOTALS, 0)
         self._stopping = False
+        self.stopped = False  # True once stop() was called: the run may have left work queued
 
     def stop(self) -> None:
         """Finish what's in flight, hand back the rest, and return from ``run``."""
-        self._stopping = True
+        self._stopping = self.stopped = True
 
     def _cap(self) -> int:
         if self.limit is None:
@@ -78,6 +79,14 @@ class Crawler:
         except NotFound:
             return Outcome(item, missing=True)
         except (HttpError, ParseError, ValueError) as exc:
+            return Outcome(item, error=f"{type(exc).__name__}: {exc}")
+        except Exception as exc:
+            # Anything else (a payload or header shape nobody anticipated, or a
+            # bug) is still this item's failure: it counts toward max_attempts
+            # and is parked as failed, instead of ending the run and leaving a
+            # poison item at the head of the queue. The traceback is logged so
+            # bugs stay visible, and failed items make the crawl exit 1.
+            log.warning("unexpected error on %s %s", item.kind, item.key, exc_info=True)
             return Outcome(item, error=f"{type(exc).__name__}: {exc}")
 
     def _flush(self, buffer: list[Outcome]) -> None:
@@ -130,7 +139,14 @@ class Crawler:
                         break
                     wait = store.next_ready_in()
                     if wait is None:
-                        break  # nothing queued; anything leased belongs to a live worker
+                        if not store.leased_elsewhere(self.owner):
+                            break  # the job is finished
+                        # Other workers hold leases. Wait for them to finish, or
+                        # for them to be found dead and their items requeued;
+                        # exiting now would strand those items and report success.
+                        if store.reap(self.stale_after):
+                            continue
+                        wait = min(self.heartbeat, 0.5)  # poll: they may finish any moment
                     await asyncio.sleep(min(max(wait, 0.05), self.heartbeat))
                 else:
                     done, _ = await asyncio.wait(tasks, timeout=self.flush_interval,

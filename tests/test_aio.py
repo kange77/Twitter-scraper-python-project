@@ -183,3 +183,12 @@ def test_cli_async_batch_survives_poisoned_payload(tweet_results, endpoints, tmp
     assert serve({"/tweet-result": handler}, test) == 1
     assert "failed: 666: tweet 666: unexpected __typename" in capsys.readouterr().err
     assert [t.id for t in load(out)] == ["1834231000000000000", "1834231234567890123"]
+
+
+def test_unknown_charset_falls_back_to_utf8():
+    # Principal QA P1: a mislabelled Content-Type raised LookupError.
+    from multidict import CIMultiDict, CIMultiDictProxy
+    from xscraper.aio import Response
+    r = Response(200, "café".encode(), CIMultiDictProxy(CIMultiDict()), "x-bogus")
+    assert r.text == "café"
+    assert Response(200, "café".encode("latin-1"), CIMultiDictProxy(CIMultiDict()), "latin-1").text == "café"

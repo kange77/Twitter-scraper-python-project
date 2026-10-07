@@ -402,6 +402,12 @@ class Watcher:
                     return await c
                 except (HttpError, ParseError, ValueError) as exc:  # NotFound included
                     return exc
+                except Exception as exc:
+                    # One target's unexpected error must not abort the cycle for
+                    # every other target (see Crawler._work); it is recorded as
+                    # that target's error and the traceback is logged.
+                    log.warning("unexpected error while polling", exc_info=True)
+                    return exc
         return await asyncio.gather(*(run(c) for c in coros))
 
     async def cycle(self) -> list[Event]:

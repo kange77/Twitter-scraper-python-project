@@ -364,10 +364,24 @@ class JobStore:
         with self._tx():
             self.conn.execute("DELETE FROM workers WHERE id = ?", (owner,))
 
+    def leased_elsewhere(self, owner: str) -> int:
+        """Items currently leased to workers other than ``owner``."""
+        return self.conn.execute("SELECT COUNT(*) FROM frontier WHERE state = 'leased' AND lease_owner != ?",
+                                 (owner,)).fetchone()[0]
+
     def reap(self, stale_after: float = 60.0) -> int:
-        """Forget workers whose heartbeat stopped and requeue what they held."""
+        """Forget workers that are gone and requeue what they held.
+
+        A worker is gone when its heartbeat is older than ``stale_after``, or,
+        on this host, as soon as its process no longer exists (so a resume
+        right after ``kill -9`` doesn't wait for the heartbeat to go stale).
+        """
         cutoff = self._clock() - stale_after
-        dead = [r[0] for r in self.conn.execute("SELECT id FROM workers WHERE heartbeat < ?", (cutoff,))]
+        host = socket.gethostname()
+        dead = []
+        for wid, whost, pid, beat in self.conn.execute("SELECT id, host, pid, heartbeat FROM workers"):
+            if beat < cutoff or (whost == host and pid != os.getpid() and not _pid_alive(pid)):
+                dead.append(wid)
         released = 0
         for owner in dead:
             released += self.release(owner)
@@ -380,6 +394,18 @@ class JobStore:
                                  "ORDER BY started").fetchall()
         return [{"id": r[0], "host": r[1], "pid": r[2], "started": r[3], "heartbeat": r[4],
                  "stats": json.loads(r[5]) if r[5] else None} for r in rows]
+
+
+def _pid_alive(pid: Optional[int]) -> bool:
+    if not pid:
+        return True  # unknown: rely on the heartbeat
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except (PermissionError, OSError):
+        return True
+    return True
 
 
 class _Transaction:

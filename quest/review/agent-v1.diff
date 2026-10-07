@@ -1,0 +1,156 @@
+commit 0d2722acbdb0838ff9d37861628a217695c852db
+Author: Claude <noreply@anthropic.com>
+Date:   Tue Oct 6 20:07:00 2026 +0000
+
+    Fail one tweet, not the batch, on a malformed embed payload
+    
+    An embed payload whose __typename is a list or dict raised TypeError on
+    the unavailable-type membership test in parse_tweet_result. TypeError
+    escapes the per-item (HttpError, ParseError) handlers, so a `tweet`
+    batch stopped at the first such payload with a traceback.
+    
+    - parse_tweet_result only checks __typename against the unavailable
+      types when it is a string; any other value is an ordinary tweet type.
+    - tweet_from_body turns data-shape errors (TypeError, AttributeError,
+      KeyError, IndexError) raised while parsing into a ParseError naming
+      the tweet ID, chained to the original. Batch loops still catch only
+      HttpError and ParseError.
+    
+    Tests cover list/dict __typename in the parser, the wrapping in
+    tweet_from_body, and a sync and async CLI batch with a poisoned ID in
+    the middle.
+    
+    Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+    Claude-Session: https://claude.ai/code/session_01GFJYpdQfKM3EzC7aEPfcNk
+
+diff --git a/tests/test_aio.py b/tests/test_aio.py
+index bfa4f52..69c2d36 100644
+--- a/tests/test_aio.py
++++ b/tests/test_aio.py
+@@ -162,3 +162,24 @@ def test_cli_async_user_timelines(timeline_html, endpoints, tmp_path, capsys):
+     assert serve({"/srv/{name}": timeline}, test) == 1
+     assert len(json.loads((tmp_path / "t.json").read_text())) == 3
+     assert "@nosuch: 404" in capsys.readouterr().err
++
++
++def test_cli_async_batch_survives_poisoned_payload(tweet_results, endpoints, tmp_path, capsys):
++    base_handler = tweet_handler(tweet_results)
++
++    async def handler(request):
++        if request.query["id"] == "666":
++            return web.json_response({"__typename": ["Tweet"], "text": "?"})
++        return await base_handler(request)
++
++    out = tmp_path / "out.jsonl"
++
++    async def test(base, hits):
++        endpoints(base)
++        return await asyncio.to_thread(cli.main, ["tweet", "1834231000000000000", "666",
++                                                  "1834231234567890123", "--http", "async",
++                                                  "--rate", "100", "-o", str(out)])
++
++    assert serve({"/tweet-result": handler}, test) == 1
++    assert "failed: 666: " in capsys.readouterr().err
++    assert [t.id for t in load(out)] == ["1834231000000000000", "1834231234567890123"]
+diff --git a/tests/test_cli.py b/tests/test_cli.py
+index 6158a90..7438d10 100644
+--- a/tests/test_cli.py
++++ b/tests/test_cli.py
+@@ -85,3 +85,20 @@ def test_user_batch_exit_code_reports_one_failure(monkeypatch, timeline_html, ca
+ def test_analyze_missing_file(tmp_path, capsys):
+     assert cli.main(["analyze", str(tmp_path / "nope.jsonl")]) == 2
+     assert "no such file" in capsys.readouterr().err
++
++
++def test_tweet_batch_survives_poisoned_payload(monkeypatch, tweet_results, tmp_path, capsys):
++    good = {tweet_results["tweet"]["id_str"]: tweet_results["tweet"],
++            tweet_results["parent"]["id_str"]: tweet_results["parent"]}
++
++    def fake_get(self, url, params=None, headers=None):
++        if params["id"] == "666":
++            return FakeResponse(200, json.dumps({"__typename": {"kind": "Tweet"}, "text": "?"}))
++        return FakeResponse(200, json.dumps(good[params["id"]]))
++
++    monkeypatch.setattr(cli.HttpClient, "get", fake_get)
++    out = tmp_path / "out.jsonl"
++    ids = ["1834231000000000000", "666", "1834231234567890123"]
++    assert cli.main(["tweet", *ids, "-o", str(out)]) == 1
++    assert "failed: 666: " in capsys.readouterr().err
++    assert [t.id for t in load(out)] == ["1834231000000000000", "1834231234567890123"]
+diff --git a/tests/test_parse.py b/tests/test_parse.py
+index 97e814c..ec9c7ea 100644
+--- a/tests/test_parse.py
++++ b/tests/test_parse.py
+@@ -131,3 +131,16 @@ def test_timeline_with_malformed_entries(timeline_html):
+                 {"type": "tweet", "content": {"tweet": {"id_str": "9", "full_text": "ok"}}}]}}}})
+             + "</script>")
+     assert [t.id for t in parse_timeline_page(page)] == ["9"]
++
++
++@pytest.mark.parametrize("typename", [["Tweet"], {"name": "TweetTombstone"}])
++def test_non_string_typename_is_an_ordinary_tweet(typename):
++    # An unhashable __typename used to raise TypeError on the membership test.
++    t = parse_tweet_result({"__typename": typename, "id_str": "1", "text": "hi"})
++    assert t.id == "1" and t.text == "hi"
++
++
++@pytest.mark.parametrize("typename", [["Tweet"], {"name": "Tweet"}])
++def test_non_string_typename_without_id_is_parse_error(typename):
++    with pytest.raises(ParseError):
++        parse_tweet_result({"__typename": typename, "text": "garbled"})
+diff --git a/tests/test_scraper.py b/tests/test_scraper.py
+index e57bb7b..e7ce763 100644
+--- a/tests/test_scraper.py
++++ b/tests/test_scraper.py
+@@ -147,3 +147,16 @@ def test_user_timelines_reports_each_failure(timeline_html):
+ 
+     got = Scraper(FakeClient(handler), workers=4).user_timelines(["NASA", "nosuch", "bad name"])
+     assert len(got[0]) == 3 and isinstance(got[1], NotFound) and isinstance(got[2], ValueError)
++
++
++def test_tweet_from_body_wraps_shape_errors(monkeypatch):
++    from xscraper import scraper as scraper_mod
++    from xscraper.parse import ParseError
++
++    def broken(data):
++        raise TypeError("unhashable type: 'list'")
++
++    monkeypatch.setattr(scraper_mod, "parse_tweet_result", broken)
++    with pytest.raises(ParseError, match="tweet 1834231234567890123") as info:
++        scraper_mod.tweet_from_body("1834231234567890123", b'{"id_str": "1"}')
++    assert isinstance(info.value.__cause__, TypeError)
+diff --git a/xscraper/parse.py b/xscraper/parse.py
+index 925a09f..4cf337f 100644
+--- a/xscraper/parse.py
++++ b/xscraper/parse.py
+@@ -183,7 +183,10 @@ def parse_tweet_result(data: Any) -> Optional[Tweet]:
+         return None
+     if not isinstance(data, dict):
+         raise ParseError(f"unexpected tweet-result payload: {type(data).__name__}")
+-    if data.get("__typename") in _UNAVAILABLE_TYPES or "tombstone" in data:
++    # ``__typename`` is normally a string, but a malformed payload can carry a
++    # list or dict there, which isn't hashable; treat it as an ordinary tweet.
++    typename = data.get("__typename")
++    if (isinstance(typename, str) and typename in _UNAVAILABLE_TYPES) or "tombstone" in data:
+         return None
+     return parse_tweet(data, source="syndication-tweet")
+ 
+diff --git a/xscraper/scraper.py b/xscraper/scraper.py
+index c1babe6..d05ba57 100644
+--- a/xscraper/scraper.py
++++ b/xscraper/scraper.py
+@@ -65,7 +65,13 @@ def tweet_from_body(tweet_id: str, body: bytes) -> Optional[Tweet]:
+     except ValueError as exc:
+         raise ParseError(f"tweet {tweet_id}: response was not JSON "
+                          "(request blocked or endpoint changed)") from exc
+-    return parse_tweet_result(data)
++    try:
++        return parse_tweet_result(data)
++    except (TypeError, AttributeError, KeyError, IndexError) as exc:
++        # The payload's shape is not what the parser expects. Fail this one
++        # tweet with a ParseError so batch callers report it and carry on.
++        raise ParseError(f"tweet {tweet_id}: unexpected payload shape "
++                         f"({type(exc).__name__}: {exc})") from exc
+ 
+ 
+ def timeline_from_page(page: str, include_retweets: bool) -> list[Tweet]:

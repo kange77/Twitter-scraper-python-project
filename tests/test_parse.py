@@ -131,3 +131,11 @@ def test_timeline_with_malformed_entries(timeline_html):
                 {"type": "tweet", "content": {"tweet": {"id_str": "9", "full_text": "ok"}}}]}}}})
             + "</script>")
     assert [t.id for t in parse_timeline_page(page)] == ["9"]
+
+
+@pytest.mark.parametrize("typename", [["Tweet"], {"name": "Tweet"}, ["TweetTombstone"]])
+def test_non_string_typename_is_parse_error(typename):
+    # The shape the QA fuzzer found: it used to raise TypeError (unhashable)
+    # and abort whole batches. It must not be stored as a blank tweet either.
+    with pytest.raises(ParseError, match="__typename"):
+        parse_tweet_result({"__typename": typename, "id_str": "900"})

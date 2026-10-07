@@ -162,3 +162,24 @@ def test_cli_async_user_timelines(timeline_html, endpoints, tmp_path, capsys):
     assert serve({"/srv/{name}": timeline}, test) == 1
     assert len(json.loads((tmp_path / "t.json").read_text())) == 3
     assert "@nosuch: 404" in capsys.readouterr().err
+
+
+def test_cli_async_batch_survives_poisoned_payload(tweet_results, endpoints, tmp_path, capsys):
+    base_handler = tweet_handler(tweet_results)
+
+    async def handler(request):
+        if request.query["id"] == "666":
+            return web.json_response({"__typename": ["Tweet"], "id_str": "666"})
+        return await base_handler(request)
+
+    out = tmp_path / "out.jsonl"
+
+    async def test(base, hits):
+        endpoints(base)
+        return await asyncio.to_thread(cli.main, ["tweet", "1834231000000000000", "666",
+                                                  "1834231234567890123", "--http", "async",
+                                                  "--rate", "100", "-o", str(out)])
+
+    assert serve({"/tweet-result": handler}, test) == 1
+    assert "failed: 666: tweet 666: unexpected __typename" in capsys.readouterr().err
+    assert [t.id for t in load(out)] == ["1834231000000000000", "1834231234567890123"]

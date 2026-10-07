@@ -65,7 +65,17 @@ def tweet_from_body(tweet_id: str, body: bytes) -> Optional[Tweet]:
     except ValueError as exc:
         raise ParseError(f"tweet {tweet_id}: response was not JSON "
                          "(request blocked or endpoint changed)") from exc
-    return parse_tweet_result(data)
+    # Batch callers catch only HttpError and ParseError per tweet. Any other
+    # error raised while reading the payload would abort the whole batch, so
+    # data-shape errors become a ParseError for this one tweet. Errors from
+    # outside the parser (HTTP, output, our own scheduling) are not caught here.
+    try:
+        return parse_tweet_result(data)
+    except ParseError as exc:
+        raise ParseError(f"tweet {tweet_id}: {exc}") from exc
+    except (TypeError, ValueError, LookupError, AttributeError, ArithmeticError) as exc:
+        raise ParseError(f"tweet {tweet_id}: unexpected payload shape "
+                         f"({type(exc).__name__}: {exc})") from exc
 
 
 def timeline_from_page(page: str, include_retweets: bool) -> list[Tweet]:

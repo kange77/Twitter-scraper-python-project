@@ -1,0 +1,117 @@
+{
+  "src": "<main checkout @4585f8f>",
+  "imported": "<main checkout @4585f8f>/xscraper/__init__.py",
+  "python": "3.13.16",
+  "synthetic_mock": true,
+  "poison_ids": [
+    "500",
+    "700",
+    "900"
+  ],
+  "clean_async": {
+    "ids": 400,
+    "poison_ids": 0,
+    "exit": 0,
+    "seconds": 1.61,
+    "requests": 400,
+    "tweets_written": 400,
+    "ids_lost": 0,
+    "failures_reported": 0,
+    "traceback": false,
+    "stderr_tail": [
+      "wrote 400 tweets to /tmp/tmp2t3iriqf/batch_async.jsonl"
+    ]
+  },
+  "poison_async": {
+    "ids": 1000,
+    "poison_ids": 3,
+    "exit": 1,
+    "seconds": 1.88,
+    "requests": 516,
+    "tweets_written": 499,
+    "ids_lost": 498,
+    "failures_reported": 0,
+    "traceback": true,
+    "stderr_tail": [
+      "TypeError: unhashable type: 'list'"
+    ]
+  },
+  "poison_async_rerun": {
+    "ids": 1000,
+    "poison_ids": 3,
+    "exit": 1,
+    "seconds": 1.9,
+    "requests": 516,
+    "tweets_written": 499,
+    "ids_lost": 498,
+    "failures_reported": 0,
+    "traceback": true,
+    "stderr_tail": [
+      "TypeError: unhashable type: 'list'"
+    ]
+  },
+  "clean_sync": {
+    "ids": 400,
+    "poison_ids": 0,
+    "exit": 0,
+    "seconds": 1.51,
+    "requests": 400,
+    "tweets_written": 400,
+    "ids_lost": 0,
+    "failures_reported": 0,
+    "traceback": false,
+    "stderr_tail": [
+      "wrote 400 tweets to /tmp/tmp2t3iriqf/batch_sync.jsonl"
+    ]
+  },
+  "poison_sync": {
+    "ids": 1000,
+    "poison_ids": 3,
+    "exit": 1,
+    "seconds": 1.89,
+    "requests": 518,
+    "tweets_written": 499,
+    "ids_lost": 498,
+    "failures_reported": 0,
+    "traceback": true,
+    "stderr_tail": [
+      "TypeError: unhashable type: 'list'"
+    ]
+  },
+  "poison_sync_rerun": {
+    "ids": 1000,
+    "poison_ids": 3,
+    "exit": 1,
+    "seconds": 1.88,
+    "requests": 517,
+    "tweets_written": 499,
+    "ids_lost": 498,
+    "failures_reported": 0,
+    "traceback": true,
+    "stderr_tail": [
+      "TypeError: unhashable type: 'list'"
+    ]
+  },
+  "candidates": {
+    "B_reset_in_ms": {
+      "exit": "timeout",
+      "seconds": 20.02,
+      "requests": 1,
+      "tweets_printed": 0
+    },
+    "C_store_clobber": {
+      "retweet_quote_after_user": [
+        40,
+        2
+      ],
+      "after_tweet_refetch": [
+        null,
+        null
+      ]
+    },
+    "D_format_without_output": {
+      "stdout_is_json": false,
+      "first_char": "2"
+    }
+  }
+}

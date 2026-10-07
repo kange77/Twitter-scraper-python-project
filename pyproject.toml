@@ -14,7 +14,7 @@ dependencies = ["requests>=2.28"]
 [project.optional-dependencies]
 wasm = ["wasmtime>=20"]
 fast = ["aiohttp>=3.9", "orjson>=3.9"]
-dev = ["wasmtime>=20", "aiohttp>=3.9", "orjson>=3.9", "pytest>=7"]
+dev = ["wasmtime>=20", "aiohttp>=3.9", "orjson>=3.9", "pytest>=7", "pytest-timeout>=2"]
 
 [project.scripts]
 xscraper = "xscraper.cli:main"
@@ -29,4 +29,5 @@ include = ["xscraper*"]
 "xscraper.analysis" = ["*.wasm"]
 
 [tool.pytest.ini_options]
+timeout = 60  # a hang (e.g. a lost wakeup) fails one test instead of stalling CI
 testpaths = ["tests"]

@@ -54,6 +54,22 @@ Give it [handoff.md](handoff.md) (the flow diagram, rules and checklist) and [me
 
 Review its output against the checklist in `handoff.md` before accepting it.
 
+## Beyond this Quest: multi-agent work on 2026-10-07 (outside the Quest's scope)
+This isn't part of the Quest change, and the flow above is unchanged. It's listed because it shows the same way of working with more agents at once. All of it is in public branches:
+- [`claude/tier45-release-gate`](https://github.com/kange77/Twitter-scraper-python-project/tree/claude/tier45-release-gate)
+- [`claude/live-contract-update`](https://github.com/kange77/Twitter-scraper-python-project/tree/claude/live-contract-update)
+
+| Practice | What happened (measured unless marked) |
+|---|---|
+| **Isolation** | Each agent got its own git worktree and its own local ports, and was told to leave the shared checkout alone. Only the lead agent committed to the main branch. |
+| **Parallel QA, briefed per role** | Three QA agents ran at once: a fault-injection rerun of the 2026-09-29 QA scripts, mutation testing, and an adversarial review of the diff. Two hit the account's usage limit and stopped early. Their partial results were recovered from disk and the missing work was finished by hand. |
+| **Mutation testing as the acceptance gate** | 50 planted bugs. The suite caught 34; after `tests/test_faults.py` was added it caught all 50. |
+| **Agent output checked, not trusted** | The fault-injection agent reported "6 mutants survive". That was true for the commit it tested, but stale for the branch head, so it was re-measured and not repeated. Its three real findings (in-flight depth race, zombie helper processes, `{}` read as "deleted") were reproduced with its own scripts, fixed, and turned into tests. |
+| **Redirecting an agent on new evidence** | The update agent was building "X requires login for timelines" from a single probe. The live-crawl agent then saw 20 entries on the same endpoint. The update agent was redirected mid-task to "intermittent, retryable", and a final live check gave the empty page again, which confirmed it. |
+| **Reading the lead's own measurements critically** | A 4-process benchmark exited 1 on the new code. The cause was the benchmark script itself: no `__main__` guard, so every helper crashed. The old code had hidden that and exited 0. |
+| **Live data under limits** | A 1 request/second crawl from public Wikipedia-linked tweet IDs: 213 requests, 193 tweets. No cookies, no proxies, nothing that gets around X's access controls. |
+| **Limits stated** | S3 (the shared rate budget) is only partly fixed: 429s fell from 359 to 76 with 4 processes. A CI workflow change waits on a token scope. Nothing was merged. |
+
 ## Limitations
 - The reviewer of the agent's work was another Claude agent, from the same system. Karimi's own review is still required.
 - No second human has done the handoff exercise.

@@ -121,7 +121,9 @@ python quest/checks.py --src <dir with c004558>       # optional: the rejected a
 - The brief suggests 6–8 hours. This went faster because the defect candidates and their reproductions came from the pre-existing 2026-09-29 reviews, and because an AI did most of the drafting. That's why Karimi's review of it matters.
 
 ## G. Limitations
-- **No live validation.** X is unreachable from this environment, so the bad payload shape is synthetic (fuzzed), not captured from X.
+- **No live validation of the fix itself.** X was unreachable from the environment where the Quest was done, so the bad payload shape is synthetic (fuzzed), not captured from X.
+  - **Update 2026-10-07:** from Karimi's machine, the live embed endpoint works (`xscraper tweet 20`). A later 213-request crawl outside the Quest's scope parsed every real response without error.
+  - **Still unseen live:** no malformed `__typename` turned up, so how often X sends one remains unknown.
 - **Single machine.** One run per version; no claim about team-wide or production impact.
 - **The handoff wasn't done by another person.**
 - **Same-author review.** The reviewer was an AI from the same system as the implementer. Karimi's human review is still required.

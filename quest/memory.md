@@ -13,7 +13,7 @@ Optional Quest document. These are facts, decisions and gotchas that someone (a 
   - The request count on `main` varies between 515 and 518 per run.
 - **Test suite:**
   - `main`: 171 passed.
-  - Quest branch: 178 passed.
+  - Quest branch: 178 passed; 183 with the yardstick gate (`tests/test_yardstick.py`, added 2026-10-08).
   - 6 of the new tests fail on `main`; 5 fail on the rejected agent version.
 - **Live X:**
   - Unreachable from the cloud session where the Quest was done.
@@ -33,6 +33,7 @@ Optional Quest document. These are facts, decisions and gotchas that someone (a 
   - Enforced by `test_unexpected_field_types_do_not_crash`.
 
 ## Gotchas
+- **`git stash` is shared by all worktrees of a repository.** Parallel agents in worktrees must not use it; it contaminated 2 of 6 experiment runs on 2026-10-08.
 - **Measuring the wrong code:**
   - `python -c` puts the current directory first on `sys.path`, and the venv has an editable install.
   - Always run `checks.py --src <checkout>`; it runs from that checkout and prints `imported`. Check that path.
@@ -47,7 +48,7 @@ Optional Quest document. These are facts, decisions and gotchas that someone (a 
 
 ## Commands
 ```bash
-python -m pytest -q                                   # 178 passed on the Quest branch
+python -m pytest -q                                   # 183 passed on the Quest branch
 python quest/checks.py --src ../xs-main --candidates  # before (git worktree add ../xs-main main)
 python quest/checks.py --src . --candidates           # after
 ```

@@ -46,6 +46,15 @@ The implementing agent got only the directive on purpose, to test whether the di
 
 **Lesson:** the costliest error was in the instructions, not the generated code. The agent even flagged the consequence in its report. Directives now state what the user must *receive*, not only what must stop crashing.
 
+## Testing the directive itself (2026-10-08)
+The lesson above was tested with 3 fresh agents per directive version, scored mechanically.
+- **Directive v1: 0 of 3 passed.** All three flagged the conflict, then wrote blank tweets with a green suite.
+- **Final directive: 3 of 3 passed.**
+- All three final-directive agents flagged one more conflict in the final directive, and it's now fixed.
+- A shared `git stash` contaminated 2 runs. They were caught, discarded and rerun.
+
+See [experiment/README.md](experiment/README.md). The yardstick now runs on every CI build as `tests/test_yardstick.py`, so a v1-style fix can't pass CI.
+
 ## Briefing a new agent on this flow
 Give it [handoff.md](handoff.md) (the flow diagram, rules and checklist) and [memory.md](memory.md) (facts and gotchas). Also give it a task with:
 - the file boundaries;

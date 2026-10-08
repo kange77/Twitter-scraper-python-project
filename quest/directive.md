@@ -28,7 +28,7 @@ In `xscraper tweet` batches, a response the parser can't read must cost **that o
 ## 5. Tests and checks required
 - Unit tests on the **real** bad shape (`__typename` list or dict *with* `id_str`, plus `["TweetTombstone"]`), the ID-prefix wrapping, and that a `RuntimeError` still propagates.
 - CLI tests on both engines: a bad ID in the middle of a batch gives `failed: <id>: …`, every good tweet written, exit 1.
-- Every new test fails on `main`. `python -m pytest -q` passes.
+- Every new test fails on `main`, except regression guards labelled as such (the "`RuntimeError` still propagates" test passes on `main` by design). `python -m pytest -q` passes, including `tests/test_yardstick.py`.
 - `quest/checks.py` before and after: `ids_lost == 0`, `failures_reported == poison_ids`, no traceback, and clean batches unchanged.
 
 ## 6. Roles and review responsibilities
@@ -42,6 +42,9 @@ In `xscraper tweet` batches, a response the parser can't read must cost **that o
 All lines of [yardstick.md](yardstick.md) hold, with evidence linked in the appendix. The draft PR is green on CI and reviewed by Karimi.
 
 ## Changes from v1
+- **After the 2026-10-08 experiment:**
+  - Requirement 5 now excepts labelled regression guards from "fails on `main`". All three agents given the final directive flagged that conflict ([experiment/README.md](experiment/README.md)).
+  - The yardstick is enforced by `tests/test_yardstick.py`.
 - **Requirement 1 reversed.** v1 said a non-string `__typename` should be "treated as an ordinary tweet type". The agent did that faithfully, and malformed payloads became blank tweets with exit 0. I rejected it ([review/code-review.md](review/code-review.md)).
 - **Tests must use the real shape.** v1 didn't say so, and the agent's CLI tests dropped `id_str` to pass.
 - **Added** `ValueError` and `ArithmeticError` to the converted errors, the ID prefix on existing `ParseError`s, and the "other errors propagate" test.
@@ -69,6 +72,8 @@ All lines of [yardstick.md](yardstick.md) hold, with evidence linked in the appe
 | Handoff demonstration (self-performed) | [review/handoff-demo.md](review/handoff-demo.md) |
 | Pre-existing evidence (2026-09-29, unchanged copies) | [prior-work/xscraper-review.md](prior-work/xscraper-review.md) · [prior-work/principal-qa.md](prior-work/principal-qa.md) |
 | Loom outline | [loom-script.md](loom-script.md) |
+| **Directive experiment** (v1 vs final, 3 fresh agents each, scored mechanically) | [experiment/README.md](experiment/README.md) |
+| **Yardstick as a CI gate** (runs in the existing `pytest` job) | [tests/test_yardstick.py](https://github.com/kange77/Twitter-scraper-python-project/blob/claude/quest-quality-fix-r0t0ss/tests/test_yardstick.py) |
 | Agent roles, rules and collaboration (optional) | [agents.md](agents.md) |
 | Lasting facts, decisions and gotchas for the flow (optional) | [memory.md](memory.md) |
 
@@ -79,7 +84,7 @@ Commits on the branch, in order: `8d25838` yardstick, directive v1 and check scr
 git clone https://github.com/kange77/Twitter-scraper-python-project && cd Twitter-scraper-python-project
 python -m venv .venv && . .venv/bin/activate
 git checkout claude/quest-quality-fix-r0t0ss && pip install -e ".[dev]"
-python -m pytest -q                                   # 178 passed
+python -m pytest -q                                   # 183 passed (178 + 5 yardstick gate tests)
 git worktree add ../xs-main main                      # the "before" code
 python quest/checks.py --src ../xs-main --candidates  # before: ids_lost 498, traceback
 python quest/checks.py --src . --candidates           # after:  ids_lost 0, 3 named failures
@@ -103,6 +108,16 @@ python quest/checks.py --src <dir with c004558>       # optional: the rejected a
 | Candidates B, C, D (out of scope) | hang, counts erased, flag ignored | — | unchanged, as intended |
 
 **Measured vs estimated.** Every row above is measured on one local run per version. "About 8 minutes of rate budget saved per rerun at `--rate 1`" is arithmetic (499 requests ÷ 1/s). The 30–60 minutes for a newcomer to do the handoff exercise is a guess. How often X actually sends such payloads is **unknown**.
+
+## C2. Did the directive change cause the fix? (experiment, 2026-10-08)
+- **Directive v1: 0 of 3 fresh agents passed** (0 of 4 counting the original run). Every one wrote the 3 malformed payloads as blank tweets with exit 0, and every one had a green suite of its own.
+- **Final directive: 3 of 3 passed:** 0 lost, 0 blank, 3 named, exit 1, and the hidden reference tests pass.
+- **Scoring:** mechanical, by `checks.py`, the hidden tests and a scope check. The scorer was calibrated first on `main`, `c004558` and `4181442`.
+- **Small n:** 3 per arm. The final directive states the required behaviour outright, so this shows the instructions are sufficient, not that agents would find the policy alone.
+- **Incident:** two of the six runs were contaminated by a shared `git stash`. They were caught by comparing each diff with its agent's report, then discarded and rerun.
+- Details: [experiment/README.md](experiment/README.md).
+
+**Gate:** `tests/test_yardstick.py` runs yardstick lines Q1–Q4 on every CI run. It passes on this branch, and it fails on `main` ("Q1: a bad payload cost 498 good tweets") and on every v1-style fix ("Q2: 3 malformed payloads were written as tweets").
 
 ## D. Handoff
 - Context to change the code, rules, review checklist and exercise: [handoff.md](handoff.md).

@@ -59,7 +59,7 @@ cli.cmd_tweet ─┬─ async: aio.AsyncScraper.iter_tweets → _tweet_or_exc �
 git clone https://github.com/kange77/Twitter-scraper-python-project && cd Twitter-scraper-python-project
 git checkout claude/quest-quality-fix-r0t0ss
 python -m venv .venv && . .venv/bin/activate && pip install -e ".[dev]"
-python -m pytest -q                       # expect: 178 passed
+python -m pytest -q                       # expect: 183 passed (includes the yardstick gate)
 python quest/checks.py --src .            # expect: poison_* ids_lost 0, failures_reported 3
 ```
 

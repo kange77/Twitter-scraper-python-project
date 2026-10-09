@@ -28,8 +28,9 @@ python quest/checks.py --src .          | head -40   # ids_lost 0, failures_repo
 - "The handoff demo failed the first time: my exercise contradicted an existing test that says attribute fields degrade. That gap is now documented. Another engineer still needs to do the exercise. I'm not claiming that's been done."
 
 ## 3:50–4:50 · How I used AI, my decisions, limitations
-- AI: one agent implemented from directive v1, and another drafted the measurements, review and docs. Fill in what you personally checked and changed.
-- Your decisions: the repo and scope, the scoring weights, accepting "parser bugs look like data errors", and rejecting blank tweets.
+- AI: one agent implemented from directive v1, and another drafted the measurements, review and docs.
+- What I checked: I had the suite and `checks.py` re-run on my machine, then commissioned the directive experiment (v1 0/3, final 3/3) and an independent review.
+- My decisions: the repo and scope, problem A over B, C and D, the scores, and rejecting blank tweets.
 - Limitations: no live X, a synthetic payload, one machine, a self-performed handoff, and an AI reviewer that you then reviewed.
 
 ## 4:50–5:00 · Close

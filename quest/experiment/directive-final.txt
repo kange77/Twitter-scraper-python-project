@@ -1,0 +1,35 @@
+## 1. Objective
+In `xscraper tweet` batches, a response the parser can't read must cost **that one ID**, visibly, and nothing else. The other IDs are still fetched and written, the bad ID is named, and the exit code says something failed.
+
+## 2. Context
+- `cli.cmd_tweet` runs a batch on the async engine (`aio.AsyncScraper.iter_tweets`) or the thread pool (`scraper.Scraper.iter_tweets`). Both call `scraper.tweet_from_body`, which calls `parse.parse_tweet_result`.
+- Per-ID failures travel as `HttpError` or `ParseError`. Any other exception ends the batch.
+- On `main`, `{"__typename": ["Tweet"], "id_str": "…"}` raises `TypeError` at `parse.py:186`. That shape was found by the 2026-09-29 QA fuzzing (senior review, finding 1).
+- **Payload policy:** a wrong type in an *attribute* field degrades to `None` or empty and the tweet is kept (this predates the Quest and is enforced by `test_unexpected_field_types_do_not_crash`). A bad *identity* field (`id_str`, `__typename`, `tombstone`) fails the ID.
+
+## 3. Scope
+**In:** `xscraper/parse.py` (`parse_tweet_result`), `xscraper/scraper.py` (`tweet_from_body`), tests, and `quest/`.
+**Out:** everything listed under non-goals in intent.md. That covers the rate gate and `http.py`, storage, the CLI, the `user`/timeline path, the crawl and watch branch, the duplicated `except` tuples, and live X.
+
+## 4. Requirements
+1. A non-string `__typename` raises `ParseError`. It is **never** stored as a tweet, because it might be a tombstone.
+2. `tweet_from_body` converts data-shape errors (`TypeError`, `ValueError`, `LookupError`, `AttributeError`, `ArithmeticError`) raised during parsing into `ParseError("tweet <id>: …")`, and chains the original. Existing `ParseError`s get the ID prefix too.
+3. No `except Exception` and no new `except` in the batch loops. Errors from outside the parser still propagate.
+4. Public API unchanged. No new dependencies.
+
+## 5. Tests and checks required
+- Unit tests on the **real** bad shape (`__typename` list or dict *with* `id_str`, plus `["TweetTombstone"]`), the ID-prefix wrapping, and that a `RuntimeError` still propagates.
+- CLI tests on both engines: a bad ID in the middle of a batch gives `failed: <id>: …`, every good tweet written, exit 1.
+- Every new test fails on `main`. `python -m pytest -q` passes.
+- `quest/checks.py` before and after: `ids_lost == 0`, `failures_reported == poison_ids`, no traceback, and clean batches unchanged.
+
+## 6. Roles and review responsibilities
+| Who | Does | Does not |
+|---|---|---|
+| Implementing agent (Claude sub-agent, isolated worktree) | Implements to this directive, runs tests, reports the diff and test output, flags any conflict between requirements | Push, open PRs, edit outside scope, decide policy |
+| Thread agent (Claude, working for Karimi) | Wrote the directives, measurements, review and docs. Ran the checks and corrected the agent's output | Merge. Its review doesn't replace Karimi's |
+| **Karimi (accountable engineer)** | Reads the diff and the review, re-runs the checks, decides to merge, records the Loom, does or arranges the handoff exercise | — |
+
+## 7. Completion criteria
+Every requirement and test in sections 4 and 5 holds. (`quest/checks.py` and the yardstick are not available in this exercise; the reviewer runs them afterwards.)
+

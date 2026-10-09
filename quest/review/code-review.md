@@ -2,8 +2,9 @@
 
 **Reviewed:** commit `c004558` "Fail one tweet, not the batch, on a malformed embed payload" (full diff: [agent-v1.diff](agent-v1.diff)).
 **Author:** a Claude sub-agent working alone in an isolated git worktree, given only [directive-v1.md](../directive-v1.md).
-**Reviewer:** the Claude thread agent working for Karimi, checking against [yardstick.md](../yardstick.md). Karimi, as the accountable engineer, still has to read and sign off on this review (see "Limitations" in `directive.md`).
-**Outcome:** I rejected one behaviour and corrected it in `4181442`. I kept the rest.
+**Reviewer:** the Claude thread agent working for Karimi ("I" below), checking against [yardstick.md](../yardstick.md).
+**Decision:** **Karimi decided to reject** the blank-tweet behaviour and to require a named failure instead (2026-10-06).
+**Outcome:** one behaviour rejected; the thread agent wrote the correction in `4181442`. The rest was kept.
 
 ## What the agent got right
 - It kept to the file boundaries in the directive: `parse.py` and `scraper.py`, plus tests. No HTTP, CLI or storage changes.

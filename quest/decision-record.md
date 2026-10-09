@@ -1,6 +1,6 @@
 # Decision record: where a malformed tweet payload stops
 
-**Status:** accepted, in this branch · **Date:** 2026-10-06 · **Decider:** Karimi (prepared with an AI agent; see `directive.md`)
+**Status:** accepted, in this branch · **Date:** 2026-10-06 · **Decider:** Karimi decided the outcome: fail the ID, never store a malformed payload as a tweet. The thread agent prepared the option analysis and the trade-offs below (see `directive.md` §E).
 
 ## Context
 `xscraper tweet` fetches IDs in a batch. Both the async and the thread-pool engines call `tweet_from_body`, which calls `parse_tweet_result`. The batch loops treat `HttpError` and `ParseError` as "this ID failed" and carry on. Any other exception ends the batch. On `main`, an embed payload whose `__typename` is a list or dict raises `TypeError`, so one bad response loses everything after it (measured: 498 of 997 good tweets lost in a 1,000-ID batch, and every rerun fails at the same place).

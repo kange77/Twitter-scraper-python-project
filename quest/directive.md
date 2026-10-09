@@ -107,7 +107,15 @@ python quest/checks.py --src <dir with c004558>       # optional: the rejected a
 | New tests failing on main / on agent v1 | — | — | 6 / 5 |
 | Candidates B, C, D (out of scope) | hang, counts erased, flag ignored | — | unchanged, as intended |
 
-**Measured vs estimated.** Every row above is measured on one local run per version. "About 8 minutes of rate budget saved per rerun at `--rate 1`" is arithmetic (499 requests ÷ 1/s). The 30–60 minutes for a newcomer to do the handoff exercise is a guess. How often X actually sends such payloads is **unknown**.
+**Repeatability (measured 2026-10-09, fresh clone).**
+- `checks.py` was re-run **5 times per version**: 20 poisoned batches and 10 clean batches each. Every outcome was identical in every run:
+  - **before:** 499 written, 498 lost, a traceback, exit 1;
+  - **after:** 997 written, 0 lost, 3 named failures, exit 1, no traceback;
+  - **clean batches:** 400 / exit 0 / 400 requests.
+- Only `main`'s request count varies (514–525 on async, 516–517 on sync), because requests are still in flight when it crashes.
+- Raw summary: [results/repeat-5x-2026-10-09.json](results/repeat-5x-2026-10-09.json).
+
+**Measured vs estimated.** Every row above is measured locally: one run per version on 2026-10-06, and five per version on 2026-10-09 with identical outcomes. "About 8 minutes of rate budget saved per rerun at `--rate 1`" is arithmetic (499 requests ÷ 1/s). The 30–60 minutes for a newcomer to do the handoff exercise is a guess. How often X actually sends such payloads is **unknown**.
 
 ## C2. Did the directive change cause the fix? (experiment, 2026-10-08)
 - **Directive v1: 0 of 3 fresh agents passed** (0 of 4 counting the original run). Every one wrote the 3 malformed payloads as blank tweets with exit 0, and every one had a green suite of its own.
@@ -124,7 +132,20 @@ python quest/checks.py --src <dir with c004558>       # optional: the rejected a
 - **Observed handoff: performed by the AI agent itself, not by another engineer.** The first attempt failed an existing test, which exposed a policy the note didn't mention. I fixed the note and the exercise, and the second attempt passed (181 tests). Details: [review/handoff-demo.md](review/handoff-demo.md). No external feedback was collected.
 
 ## E. AI contribution and corrections
-- **Who did what.** The implementing agent wrote commit `c004558` alone, from directive v1. The thread agent (also Claude) wrote everything else: the comparison, `checks.py`, both directives, the correction `4181442`, and all documents. Karimi chose the repository and the Quest, and is accountable for review, merge and the Loom. **Karimi must read and edit these documents into their own words before submitting.** The scores in intent.md are proposed judgments for Karimi to confirm or change.
+- **Who did what.** In this section, "I" means the thread agent (Claude).
+  - **Implementing agent (Claude sub-agent):** wrote commit `c004558` alone, from directive v1.
+  - **Thread agent (Claude):** drafted the comparison, `checks.py`, both directives, the correction `4181442`, and the documents.
+  - **Karimi decided** (2026-10-06):
+    - the repository and scope;
+    - **problem A over B, C and D**;
+    - **to reject agent v1's output.** Blank tweets with exit 0 are unacceptable, and a malformed payload must be a named failure.
+  - **Karimi confirmed** the intent.md scores and weights as his own judgment (2026-10-09).
+  - **Karimi directed verification**, shown in the session logs for 2026-10-07 to 10-09:
+    - had the full suite and `checks.py` re-run on his own machine (2026-10-07; results matched);
+    - had a live check against X run (2026-10-07);
+    - approved and commissioned the directive experiment and the yardstick CI gate the thread agent proposed (2026-10-08);
+    - commissioned an independent cold review of the submission against the brief (2026-10-09).
+  - **Karimi is accountable** for the merge and the Loom.
 - **Correction 1 (most important).** I rejected the agent's "treat a bad `__typename` as an ordinary tweet". It turned crashes into silent blank tweets with exit 0, and the tombstone check could no longer be trusted. The root cause was my own v1 directive. Details: [review/code-review.md](review/code-review.md).
 - **Correction 2.** The agent's CLI tests used a convenient shape (no `id_str`) instead of the real one, so they passed for the wrong reason. I replaced them with the real shape.
 - **Correction 3 (my own mistake).** My first `checks.py` ran `python -c` from the repo directory, which put that checkout first on `sys.path`. So the "agent" run actually measured this checkout. I caught it because the agent's numbers matched `main` exactly, which they shouldn't have. The fix: run from the measured checkout and print the imported path.
@@ -132,14 +153,14 @@ python quest/checks.py --src <dir with c004558>       # optional: the rejected a
 
 ## F. Actual effort
 - **Agent time (measured):** about 25 minutes of wall-clock in this session (20:00 to about 20:25 UTC on 2026-10-06, docs included). The implementing sub-agent ran for 2 minutes 51 seconds of that.
-- **Karimi's own time:** *to be filled in by Karimi* (review, edits, Loom recording).
-- The brief suggests 6–8 hours. This went faster because the defect candidates and their reproductions came from the pre-existing 2026-09-29 reviews, and because an AI did most of the drafting. That's why Karimi's review of it matters.
+- **Karimi's own time:** about 6–10 hours, Karimi's estimate (not tracked): reviewing, deciding, directing and checking agents, and reading the documents. The Loom isn't included.
+- The brief suggests 6–8 hours, and Karimi's time is in that range. Agent time was short because the defect candidates and their reproductions came from the pre-existing 2026-09-29 reviews, and an AI did most of the drafting. Karimi's time went into deciding, directing and checking.
 
 ## G. Limitations
 - **No live validation of the fix itself.** X was unreachable from the environment where the Quest was done, so the bad payload shape is synthetic (fuzzed), not captured from X.
   - **Update 2026-10-07:** from Karimi's machine, the live embed endpoint works (`xscraper tweet 20`). A later 213-request crawl outside the Quest's scope parsed every real response without error.
   - **Still unseen live:** no malformed `__typename` turned up, so how often X sends one remains unknown.
-- **Single machine.** One run per version; no claim about team-wide or production impact.
+- **Local only.** Five runs per version on one machine; no claim about team-wide or production impact.
 - **The handoff wasn't done by another person.**
 - **Same-author review.** The reviewer was an AI from the same system as the implementer. Karimi's human review is still required.
 - **Some bugs look like data errors.** A `TypeError` from a real bug inside the parser now shows as a per-tweet failure (trade-off in [decision-record.md](decision-record.md)).

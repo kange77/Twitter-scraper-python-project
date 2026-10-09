@@ -17,7 +17,7 @@ All four are real, reproduced defects on `main` @4585f8f. "Measured" means `ques
 | **D** | `--format jsonl` without `-o` is silently ignored (senior review finding 10) | `tweet`, `user` | Output is the human format, so `xscraper tweet … --format jsonl \| jq` breaks. |
 
 ## Criteria and scores
-Scored 1 (poor) to 5 (best) by me. These are judgments, not measurements.
+Scored 1 (poor) to 5 (best) by Karimi. The scores were first drafted with the thread agent and confirmed as Karimi's own judgment on 2026-10-09. They are judgments, not measurements.
 
 | Criterion (weight) | Meaning of 5 | A | B | C | D |
 |---|---|---|---|---|---|

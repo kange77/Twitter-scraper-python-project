@@ -1,0 +1,305 @@
+{
+ "before": {
+  "runs": 5,
+  "poison_async": {
+   "tweets_written": [
+    499
+   ],
+   "ids_lost": [
+    498
+   ],
+   "failures_reported": [
+    0
+   ],
+   "exit": [
+    1
+   ],
+   "requests": [
+    514,
+    516,
+    520,
+    522,
+    523
+   ],
+   "traceback": [
+    true
+   ],
+   "seconds": [
+    1.58,
+    1.63
+   ]
+  },
+  "poison_sync": {
+   "tweets_written": [
+    499
+   ],
+   "ids_lost": [
+    498
+   ],
+   "failures_reported": [
+    0
+   ],
+   "exit": [
+    1
+   ],
+   "requests": [
+    516,
+    517
+   ],
+   "traceback": [
+    true
+   ],
+   "seconds": [
+    1.55,
+    1.58
+   ]
+  },
+  "poison_async_rerun": {
+   "tweets_written": [
+    499
+   ],
+   "ids_lost": [
+    498
+   ],
+   "failures_reported": [
+    0
+   ],
+   "exit": [
+    1
+   ],
+   "requests": [
+    516,
+    520,
+    523,
+    525
+   ],
+   "traceback": [
+    true
+   ],
+   "seconds": [
+    1.59,
+    1.68
+   ]
+  },
+  "poison_sync_rerun": {
+   "tweets_written": [
+    499
+   ],
+   "ids_lost": [
+    498
+   ],
+   "failures_reported": [
+    0
+   ],
+   "exit": [
+    1
+   ],
+   "requests": [
+    516,
+    517
+   ],
+   "traceback": [
+    true
+   ],
+   "seconds": [
+    1.55,
+    1.6
+   ]
+  },
+  "clean_async": {
+   "tweets_written": [
+    400
+   ],
+   "ids_lost": [
+    0
+   ],
+   "failures_reported": [
+    0
+   ],
+   "exit": [
+    0
+   ],
+   "requests": [
+    400
+   ],
+   "traceback": [
+    false
+   ],
+   "seconds": [
+    1.26,
+    1.33
+   ]
+  },
+  "clean_sync": {
+   "tweets_written": [
+    400
+   ],
+   "ids_lost": [
+    0
+   ],
+   "failures_reported": [
+    0
+   ],
+   "exit": [
+    0
+   ],
+   "requests": [
+    400
+   ],
+   "traceback": [
+    false
+   ],
+   "seconds": [
+    1.21,
+    1.25
+   ]
+  }
+ },
+ "after": {
+  "runs": 5,
+  "poison_async": {
+   "tweets_written": [
+    997
+   ],
+   "ids_lost": [
+    0
+   ],
+   "failures_reported": [
+    3
+   ],
+   "exit": [
+    1
+   ],
+   "requests": [
+    1000
+   ],
+   "traceback": [
+    false
+   ],
+   "seconds": [
+    2.92,
+    3.14
+   ]
+  },
+  "poison_sync": {
+   "tweets_written": [
+    997
+   ],
+   "ids_lost": [
+    0
+   ],
+   "failures_reported": [
+    3
+   ],
+   "exit": [
+    1
+   ],
+   "requests": [
+    1000
+   ],
+   "traceback": [
+    false
+   ],
+   "seconds": [
+    2.88,
+    2.97
+   ]
+  },
+  "poison_async_rerun": {
+   "tweets_written": [
+    997
+   ],
+   "ids_lost": [
+    0
+   ],
+   "failures_reported": [
+    3
+   ],
+   "exit": [
+    1
+   ],
+   "requests": [
+    1000
+   ],
+   "traceback": [
+    false
+   ],
+   "seconds": [
+    2.93,
+    3.92
+   ]
+  },
+  "poison_sync_rerun": {
+   "tweets_written": [
+    997
+   ],
+   "ids_lost": [
+    0
+   ],
+   "failures_reported": [
+    3
+   ],
+   "exit": [
+    1
+   ],
+   "requests": [
+    1000
+   ],
+   "traceback": [
+    false
+   ],
+   "seconds": [
+    2.87,
+    2.99
+   ]
+  },
+  "clean_async": {
+   "tweets_written": [
+    400
+   ],
+   "ids_lost": [
+    0
+   ],
+   "failures_reported": [
+    0
+   ],
+   "exit": [
+    0
+   ],
+   "requests": [
+    400
+   ],
+   "traceback": [
+    false
+   ],
+   "seconds": [
+    1.28,
+    1.35
+   ]
+  },
+  "clean_sync": {
+   "tweets_written": [
+    400
+   ],
+   "ids_lost": [
+    0
+   ],
+   "failures_reported": [
+    0
+   ],
+   "exit": [
+    0
+   ],
+   "requests": [
+    400
+   ],
+   "traceback": [
+    false
+   ],
+   "seconds": [
+    1.2,
+    1.3
+   ]
+  }
+ }
+}

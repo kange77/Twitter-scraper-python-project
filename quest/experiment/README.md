@@ -9,7 +9,7 @@
 - **Isolation:**
   - Each agent had its own git worktree at `main` @4585f8f, with no `quest/` folder, no reference fix and no review.
   - They were told not to read other worktrees, branches or the web.
-- **Scoring:** mechanical, by [score.py](score.py), after all runs finished. Raw output: [scores.txt](scores.txt).
+- **Scoring:** mechanical, by [score.py](score.py), after all runs finished. Raw output: [scores.txt](scores.txt). Every agent's full report, including the two discarded runs: [agent-reports.md](agent-reports.md).
   - `quest/checks.py`: 1,000 IDs with 3 malformed, on both engines.
   - The Quest's hidden reference tests, run against each agent's code. The agents never saw them.
   - A scope check and a catch-all `except` check.

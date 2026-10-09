@@ -54,13 +54,13 @@ All lines of [yardstick.md](yardstick.md) hold, with evidence linked in the appe
 
 # Appendix: results and handoff
 
-> Everything below was produced in one working session on 2026-10-06, in a cloud container with no access to X. **Every number comes from a local synthetic mock**, and none describes real X traffic or team-wide impact.
+> The fix, checks and documents were produced in one working session on 2026-10-06, in a cloud container with no access to X. Later additions are dated where they appear: the live check (2026-10-07), and the directive experiment and yardstick gate (2026-10-08, on Karimi's machine). **Every number comes from a local synthetic mock**, and none describes real X traffic or team-wide impact.
 
 ## A. Artifacts
 | Artifact | Link |
 |---|---|
 | Runnable repository (branch) | https://github.com/kange77/Twitter-scraper-python-project/tree/claude/quest-quality-fix-r0t0ss |
-| Focused diff (2 source files, +17/−2 lines; tests +72) | [Draft PR #5, "Files changed"](https://github.com/kange77/Twitter-scraper-python-project/pull/5/files), or `git diff main -- xscraper tests` |
+| Focused diff (2 source files, +17/−2 lines; tests +72, plus the 51-line yardstick gate added 2026-10-08) | [Draft PR #5, "Files changed"](https://github.com/kange77/Twitter-scraper-python-project/pull/5/files), or `git diff main -- xscraper tests` |
 | Why this problem (alternatives, scores, baseline, non-goals) | [intent.md](intent.md) |
 | Quality yardstick | [yardstick.md](yardstick.md) |
 | Directive v1, as given to the agent | [directive-v1.md](directive-v1.md) |
@@ -103,7 +103,7 @@ python quest/checks.py --src <dir with c004558>       # optional: the rejected a
 | Exit code | 1 (crash) | **0** | 1 |
 | Rerun result | same crash | same | same, complete |
 | Clean 400-ID batch | 400 / exit 0 / 400 req | same | same |
-| `pytest` | 171 passed | 178 passed | **178 passed** |
+| `pytest` | 171 passed | 178 passed | **178 passed** (183 with the yardstick gate added 2026-10-08) |
 | New tests failing on main / on agent v1 | — | — | 6 / 5 |
 | Candidates B, C, D (out of scope) | hang, counts erased, flag ignored | — | unchanged, as intended |
 

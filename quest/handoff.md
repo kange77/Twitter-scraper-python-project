@@ -9,7 +9,7 @@ From `python quest/checks.py --src <checkout>` with 1,000 IDs, 3 of them malform
 | Bad IDs named on stderr | 0 (traceback) | 0 | **3** |
 | Malformed payloads written as blank tweets | 0 | **3** | 0 |
 | Exit code | 1 (uncaught `TypeError`) | **0** | 1 (reported failures) |
-| Requests sent for the batch | 516–518 | 1,000 | 1,000 |
+| Requests sent for the batch | 515–519 across runs | 1,000 | 1,000 |
 | Rerun gives the same result | yes (dies at the same ID) | yes | yes |
 | Same results, async and sync engines | yes | yes | yes |
 | Clean 400-ID batch: written / exit / requests | 400 / 0 / 400 | 400 / 0 / 400 | 400 / 0 / 400 |

@@ -3,7 +3,7 @@
 **Candidate:** Karimi · **Repository:** [kange77/Twitter-scraper-python-project](https://github.com/kange77/Twitter-scraper-python-project) (my own, MIT) · **Flow in scope:** `xscraper tweet ID...` (fetch tweets by ID in a batch)
 
 ## What pre-existed and what is new
-- **Pre-existing:** the `xscraper` package (built earlier with AI help, merged as PRs #1–#4), and two QA reports written on 2026-09-29, before this Quest: `review/xscraper-review.md` (senior review) and `review/principal-qa.md` (principal QA). They are the source of the candidate problems below. The defects were not planted for this Quest; they were found by those reviews.
+- **Pre-existing:** the `xscraper` package (built earlier with AI help, merged as PRs #1–#4), and two QA reports written on 2026-09-29, before this Quest: [prior-work/xscraper-review.md](prior-work/xscraper-review.md) (senior review) and [prior-work/principal-qa.md](prior-work/principal-qa.md) (principal QA), kept as unchanged copies. They are the source of the candidate problems below. The defects were not planted for this Quest; they were found by those reviews.
 - **New for this Quest:** the comparison and scores below, the baseline and after measurements (`quest/checks.py`, `quest/results/`), the yardstick, the agent directives, the fix, its tests, the review record and the handoff material.
 
 ## Problems considered

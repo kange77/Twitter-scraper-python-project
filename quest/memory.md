@@ -10,7 +10,7 @@ Optional Quest document. These are facts, decisions and gotchas that someone (a 
 - **Baseline on `main` @4585f8f (measured, synthetic mock, 2026-10-06; reproduced 2026-10-07):**
   - In a 1,000-ID batch with 3 bad payloads, 498 good tweets were lost, with a traceback and exit 1.
   - After the fix: 0 lost, 3 named failures, exit 1.
-  - The request count on `main` varies between 515 and 518 per run.
+  - The request count on `main` varies between 515 and 519 per run.
 - **Test suite:**
   - `main`: 171 passed.
   - Quest branch: 178 passed; 183 with the yardstick gate (`tests/test_yardstick.py`, added 2026-10-08).

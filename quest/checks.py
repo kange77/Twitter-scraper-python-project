@@ -4,7 +4,7 @@ Runs the real `xscraper tweet` CLI in a subprocess against a local, SYNTHETIC
 mock of the embed endpoint, so no traffic reaches X. Point PYTHONPATH (or
 --src) at the checkout to measure:
 
-    python quest/checks.py --src /path/to/main-checkout   > before.json
+    python quest/checks.py --src /path/to/checkout-at-4585f8f   > before.json   # main before the fix
     python quest/checks.py --src .                         > after.json
 
 The mock serves a normal embed payload for every numeric ID, except IDs in

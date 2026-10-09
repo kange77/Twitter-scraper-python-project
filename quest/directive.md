@@ -1,6 +1,8 @@
 # directive.md: final working instructions and results
 
-**Candidate:** Karimi · **Repo:** [kange77/Twitter-scraper-python-project](https://github.com/kange77/Twitter-scraper-python-project) (public, MIT, my own) · **Branch:** [`claude/quest-quality-fix-r0t0ss`](https://github.com/kange77/Twitter-scraper-python-project/tree/claude/quest-quality-fix-r0t0ss) · **Draft PR:** [#5](https://github.com/kange77/Twitter-scraper-python-project/pull/5)
+**Candidate:** Karimi · **Repo:** [kange77/Twitter-scraper-python-project](https://github.com/kange77/Twitter-scraper-python-project) (public, MIT, my own) · **Branch:** [`claude/quest-quality-fix-r0t0ss`](https://github.com/kange77/Twitter-scraper-python-project/tree/claude/quest-quality-fix-r0t0ss) · **PR:** [#5](https://github.com/kange77/Twitter-scraper-python-project/pull/5) (merged into `main` by Karimi on 2026-10-09)
+
+> **Note on `main`:** in these documents, "`main`" means `main` as it was before this change: commit `4585f8f`. On 2026-10-09 this PR, and separately the crawl/watch work outside this Quest (PRs #6–#8), were merged into `main`, so use `4585f8f` to reproduce the "before" state.
 
 This is the final version of the instructions given to the AI coding agent, developed from [intent.md](intent.md). The first version, which the agent actually worked from, is [directive-v1.md](directive-v1.md). What changed between the two is under "Changes from v1" below.
 
@@ -39,7 +41,9 @@ In `xscraper tweet` batches, a response the parser can't read must cost **that o
 | **Karimi (accountable engineer)** | Reads the diff and the review, re-runs the checks, decides to merge, records the Loom, does or arranges the handoff exercise | — |
 
 ## 7. Completion criteria
-All lines of [yardstick.md](yardstick.md) hold, with evidence linked in the appendix. The draft PR is green on CI and reviewed by Karimi.
+All lines of [yardstick.md](yardstick.md) hold, with evidence linked in the appendix. The PR is green on CI and reviewed by Karimi.
+
+**Status (2026-10-09):** CI green, merged by Karimi. No GitHub review was recorded before the merge.
 
 ## Changes from v1
 - **After the 2026-10-08 experiment:**
@@ -60,7 +64,7 @@ All lines of [yardstick.md](yardstick.md) hold, with evidence linked in the appe
 | Artifact | Link |
 |---|---|
 | Runnable repository (branch) | https://github.com/kange77/Twitter-scraper-python-project/tree/claude/quest-quality-fix-r0t0ss |
-| Focused diff (2 source files, +17/−2 lines; tests +72, plus the 51-line yardstick gate added 2026-10-08) | [Draft PR #5, "Files changed"](https://github.com/kange77/Twitter-scraper-python-project/pull/5/files), or `git diff main -- xscraper tests` |
+| Focused diff (2 source files, +17/−2 lines; tests +72, plus the 51-line yardstick gate added 2026-10-08) | [Compare `8d25838...4181442`](https://github.com/kange77/Twitter-scraper-python-project/compare/8d25838...4181442) (the agent's commit plus the review correction; the source change is `parse.py` +6/−1 and `scraper.py` +11/−1, and the rest is tests and `quest/` evidence), or `git diff 8d25838 4181442 -- xscraper tests` |
 | Why this problem (alternatives, scores, baseline, non-goals) | [intent.md](intent.md) |
 | Quality yardstick | [yardstick.md](yardstick.md) |
 | Directive v1, as given to the agent | [directive-v1.md](directive-v1.md) |
@@ -85,7 +89,7 @@ git clone https://github.com/kange77/Twitter-scraper-python-project && cd Twitte
 python -m venv .venv && . .venv/bin/activate
 git checkout claude/quest-quality-fix-r0t0ss && pip install -e ".[dev]"
 python -m pytest -q                                   # 183 passed (178 + 5 yardstick gate tests)
-git worktree add ../xs-main main                      # the "before" code
+git worktree add ../xs-main 4585f8f                   # the "before" code (main before this change)
 python quest/checks.py --src ../xs-main --candidates  # before: ids_lost 498, traceback
 python quest/checks.py --src . --candidates           # after:  ids_lost 0, 3 named failures
 python quest/checks.py --src <dir with c004558>       # optional: the rejected agent version

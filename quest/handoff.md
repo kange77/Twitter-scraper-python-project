@@ -47,7 +47,7 @@ cli.cmd_tweet ─┬─ async: aio.AsyncScraper.iter_tweets → _tweet_or_exc �
 - [ ] No `except Exception` or bare `except` added; HTTP and output bugs still raise
 - [ ] New tests fail on the base branch, and use the real bad shape, not a convenient one
 - [ ] Both engines covered (`--http async` and `--http sync`)
-- [ ] Diff stays in the flow (`git diff --stat main`)
+- [ ] Diff stays in the flow (`git diff --stat` against the commit you started from)
 
 ## Handoff exercise
 **Task:** an embed payload whose `id_str` isn't numeric (for example `"abc"`) is currently stored as a tweet with that ID and a broken URL. Make it fail that ID instead, in the `tweet` flow only, following the rules and checklist above.

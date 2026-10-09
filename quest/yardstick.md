@@ -10,6 +10,6 @@ Written for this Quest before any code was changed. A change to the flow is
 | Q3 | **Reruns converge.** Running the same batch twice gives the same result, with no new loss. | `checks.py`: `poison_*_rerun` equals `poison_*` |
 | Q4 | **No change for clean input.** A batch without bad payloads produces the same output, exit code and request count as before, within timing noise. | `checks.py`: `clean_*` before vs after; full `pytest` suite |
 | Q5 | **Bugs outside the payload stay loud.** Programming errors in HTTP, scheduling or output code are not turned into per-item failures. | Code review of the exception boundary; a test that a non-shape error still propagates |
-| Q6 | **Every fix comes with a test that fails without it.** | Tests run against `main` (must fail) and the branch (must pass) |
-| Q7 | **The diff stays in one flow.** Only the tweet-by-ID path changes; HTTP, rate-limit, storage and timeline code are untouched. | `git diff --stat main` |
+| Q6 | **Every fix comes with a test that fails without it.** | Tests run against the base commit (must fail; `4585f8f` for this Quest) and the branch (must pass) |
+| Q7 | **The diff stays in one flow.** Only the tweet-by-ID path changes; HTTP, rate-limit, storage and timeline code are untouched. | `git diff --stat <base> -- xscraper` (base `4585f8f` for this Quest) |
 | Q8 | **Someone else can change it next.** The boundary is in one place, documented where a maintainer will look. | Handoff exercise in `handoff.md` |

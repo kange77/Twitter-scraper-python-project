@@ -49,7 +49,7 @@ Optional Quest document. These are facts, decisions and gotchas that someone (a 
 ## Commands
 ```bash
 python -m pytest -q                                   # 183 passed on the Quest branch
-python quest/checks.py --src ../xs-main --candidates  # before (git worktree add ../xs-main main)
+python quest/checks.py --src ../xs-main --candidates  # before (git worktree add ../xs-main 4585f8f; main now contains the fix)
 python quest/checks.py --src . --candidates           # after
 ```
 

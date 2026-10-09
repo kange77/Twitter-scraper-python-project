@@ -30,6 +30,10 @@ Scored 1 (poor) to 5 (best) by Karimi. The scores were first drafted with the th
 Why each score:
 - **A, impact 5:** the batch silently stops being a batch. Everything after the bad ID is lost, the user isn't told which ID was bad, and the only way through is to find and delete that ID by hand.
 - **A, likelihood 4:** the tool depends on an undocumented embed endpoint whose payload shape X changes without notice, and the parser is the part most exposed to that. The QA fuzzer found 84 escapes in 30,000 mutated payloads, all from this one line. That rate describes mutated test data, not X's real traffic, which has never been sampled in this project (no live access from the cloud environment). So likelihood is a judgment.
+- **What is and isn't evidenced about recurrence:**
+  - **Measured:** once the bad payload is in a batch, the cost recurs on every rerun. Each rerun dies at the same ID, losing the same 498 tweets (5 of 5 reruns on 2026-10-09).
+  - **Not measured:** how often X sends that payload. A 213-request live crawl on 2026-10-07 parsed every real response cleanly. So the frequency is unknown, and the likelihood score above is a judgment.
+
 - **A, operating cost 4:** every retry re-fetches what the failed run already had. At the default `--rate 1`, re-fetching the 499 tweets before the bad ID costs about 8 minutes of rate budget per retry. *(Estimate: 499 requests ÷ 1 request/s; not measured against X.)*
 - **A, maintenance 5:** the faulty line and the shared parse entry point (`tweet_from_body`) are both used by the sync and the async engines, so one small fix covers both.
 - **B:** a real hang, but it needs a server or proxy to send the wrong unit, and the only evidence is a synthetic header. The fix lives in the rate gate that every request passes through, and needs a policy decision about what horizon is sane, so it's riskier to change in a short exercise.

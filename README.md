@@ -1,5 +1,7 @@
 # xscraper: X/Twitter scraper with a WebAssembly analytics core
 
+> **Taking this over?** Start with [docs/HANDOVER.md](docs/HANDOVER.md): architecture, runbooks, known issues and how it was built.
+
 `xscraper` fetches public tweets from X (Twitter) and analyses them with a Rust core compiled to **WebAssembly**. The core runs in-process through [wasmtime](https://pypi.org/project/wasmtime/).
 
 - **No API keys.** It uses X's syndication endpoints, the ones behind embedded tweets and profile widgets, so it doesn't break every time x.com's frontend changes. Tweets by ID need no login. Profile timelines work logged out, but X intermittently returns an empty page for them (see [Empty profile timelines](#empty-profile-timelines)).

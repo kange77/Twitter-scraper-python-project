@@ -17,7 +17,7 @@ From `python quest/checks.py --src <checkout>` with 1,000 IDs, 3 of them malform
 | New tests that fail on `main` / on agent v1 | n/a | n/a | 6 / 5 |
 
 **Reading these honestly**
-- These are counts from one local run per row against a mock I wrote. They show the behaviour changed. They don't say how often X sends a malformed payload, which hasn't been measured; X hosts are blocked here.
+- These are counts from local runs against a synthetic mock: one run per version on 2026-10-06, then five per version on 2026-10-09 with identical outcomes (only `main`'s request count varies). They show the behaviour changed. They don't say how often X sends a malformed payload, which hasn't been measured; X hosts are blocked here.
 - Wall time isn't a result. The clean batch took 1.4–2.4 s in both versions, and that spread is run-to-run noise on this container. The poisoned batch takes longer after the fix only because the run now finishes (3.2 s vs 1.9 s).
 - "About 8 minutes of rate budget saved per rerun at `--rate 1`" (intent.md) is arithmetic, not a measurement.
 - The candidate baselines (B: 20 s timeout with 1 request, C: counts `40, 2` → `null, null`, D: human format on stdout) are unchanged after the fix, as intended. They're out of scope.

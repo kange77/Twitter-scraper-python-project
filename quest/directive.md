@@ -140,7 +140,7 @@ python quest/checks.py --src <dir with c004558>       # optional: the rejected a
     - **problem A over B, C and D**;
     - **to reject agent v1's output.** Blank tweets with exit 0 are unacceptable, and a malformed payload must be a named failure.
   - **Karimi confirmed** the intent.md scores and weights as his own judgment (2026-10-09).
-  - **Karimi directed verification**, shown in the session logs for 2026-10-07 to 10-09:
+  - **Karimi directed verification** in a Claude Code session on his own machine, 2026-10-07 to 10-09. The session log isn't published; the commits and results it produced are in this branch.
     - had the full suite and `checks.py` re-run on his own machine (2026-10-07; results matched);
     - had a live check against X run (2026-10-07);
     - approved and commissioned the directive experiment and the yardstick CI gate the thread agent proposed (2026-10-08);
@@ -153,7 +153,7 @@ python quest/checks.py --src <dir with c004558>       # optional: the rejected a
 
 ## F. Actual effort
 - **Agent time (measured):** about 25 minutes of wall-clock in this session (20:00 to about 20:25 UTC on 2026-10-06, docs included). The implementing sub-agent ran for 2 minutes 51 seconds of that.
-- **Karimi's own time:** about 6–10 hours, Karimi's estimate (not tracked): reviewing, deciding, directing and checking agents, and reading the documents. The Loom isn't included.
+- **Karimi's own time:** about 6–10 hours. This is Karimi's own estimate, not tracked, so it can't be verified: reviewing, deciding, directing and checking agents, and reading the documents. The Loom isn't included.
 - The brief suggests 6–8 hours, and Karimi's time is in that range. Agent time was short because the defect candidates and their reproductions came from the pre-existing 2026-09-29 reviews, and an AI did most of the drafting. Karimi's time went into deciding, directing and checking.
 
 ## G. Limitations

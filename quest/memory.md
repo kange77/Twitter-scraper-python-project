@@ -59,5 +59,4 @@ python quest/checks.py --src . --candidates           # after
 - **Candidate D:** `--format jsonl` without `-o` is ignored.
 - **The `user` flow:** it has the same crash class (charset).
 - **The handoff exercise:** not yet done by another engineer.
-- **Karimi's own time:** not yet recorded in `directive.md`.
 - **Release-gate fixes for the crawl and watch commands (outside this Quest):** made on 2026-10-07 on branch `claude/tier45-release-gate`. They fix candidate B for every command. They aren't part of this submission.

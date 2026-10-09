@@ -162,3 +162,54 @@ def test_cli_async_user_timelines(timeline_html, endpoints, tmp_path, capsys):
     assert serve({"/srv/{name}": timeline}, test) == 1
     assert len(json.loads((tmp_path / "t.json").read_text())) == 3
     assert "@nosuch: 404" in capsys.readouterr().err
+
+
+def test_cli_async_batch_survives_poisoned_payload(tweet_results, endpoints, tmp_path, capsys):
+    base_handler = tweet_handler(tweet_results)
+
+    async def handler(request):
+        if request.query["id"] == "666":
+            return web.json_response({"__typename": ["Tweet"], "id_str": "666"})
+        return await base_handler(request)
+
+    out = tmp_path / "out.jsonl"
+
+    async def test(base, hits):
+        endpoints(base)
+        return await asyncio.to_thread(cli.main, ["tweet", "1834231000000000000", "666",
+                                                  "1834231234567890123", "--http", "async",
+                                                  "--rate", "100", "-o", str(out)])
+
+    assert serve({"/tweet-result": handler}, test) == 1
+    assert "failed: 666: tweet 666: unexpected __typename" in capsys.readouterr().err
+    assert [t.id for t in load(out)] == ["1834231000000000000", "1834231234567890123"]
+
+
+def test_unknown_charset_falls_back_to_utf8():
+    # Principal QA P1: a mislabelled Content-Type raised LookupError.
+    from multidict import CIMultiDict, CIMultiDictProxy
+    from xscraper.aio import Response
+    r = Response(200, "café".encode(), CIMultiDictProxy(CIMultiDict()), "x-bogus")
+    assert r.text == "café"
+    assert Response(200, "café".encode("latin-1"), CIMultiDictProxy(CIMultiDict()), "latin-1").text == "café"
+
+
+def test_cli_async_user_logged_out_shell(shell_html, endpoints, capsys):
+    seen = []
+
+    async def timeline(request):
+        seen.append(request.headers.get("Cookie"))
+        return web.Response(text=shell_html, content_type="text/html")
+
+    def run(*extra):
+        async def test(base, hits):
+            endpoints(base)
+            return await asyncio.to_thread(cli.main, ["user", "NASA", "--http", "async", "--rate", "100",
+                                                      *extra])
+        return serve({"/srv/{name}": timeline}, test)
+
+    assert run() == 1
+    assert "@NASA: X returned an empty timeline page, which it does intermittently for logged-out clients" in capsys.readouterr().err
+    assert run("--cookies", "auth_token=x") == 0
+    assert "@NASA: no tweets returned" in capsys.readouterr().err
+    assert seen == [None, "auth_token=x"]

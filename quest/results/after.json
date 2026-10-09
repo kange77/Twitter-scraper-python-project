@@ -1,0 +1,139 @@
+{
+  "src": "<this branch>",
+  "imported": "<this branch>/xscraper/__init__.py",
+  "python": "3.13.16",
+  "synthetic_mock": true,
+  "poison_ids": [
+    "500",
+    "700",
+    "900"
+  ],
+  "clean_async": {
+    "ids": 400,
+    "poison_ids": 0,
+    "exit": 0,
+    "seconds": 1.67,
+    "requests": 400,
+    "tweets_written": 400,
+    "ids_lost": 0,
+    "failures_reported": 0,
+    "failure_lines": [],
+    "traceback": false,
+    "stderr_tail": [
+      "wrote 400 tweets to /tmp/tmp4vzo89ka/batch_async.jsonl"
+    ]
+  },
+  "poison_async": {
+    "ids": 1000,
+    "poison_ids": 3,
+    "exit": 1,
+    "seconds": 4.07,
+    "requests": 1000,
+    "tweets_written": 997,
+    "ids_lost": 0,
+    "failures_reported": 3,
+    "failure_lines": [
+      "failed: 500: tweet 500: unexpected __typename in tweet-result payload: list",
+      "failed: 700: tweet 700: unexpected __typename in tweet-result payload: dict",
+      "failed: 900: tweet 900: unexpected __typename in tweet-result payload: list"
+    ],
+    "traceback": false,
+    "stderr_tail": [
+      "wrote 997 tweets to /tmp/tmp4vzo89ka/batch_async.jsonl"
+    ]
+  },
+  "poison_async_rerun": {
+    "ids": 1000,
+    "poison_ids": 3,
+    "exit": 1,
+    "seconds": 4.01,
+    "requests": 1000,
+    "tweets_written": 997,
+    "ids_lost": 0,
+    "failures_reported": 3,
+    "failure_lines": [
+      "failed: 500: tweet 500: unexpected __typename in tweet-result payload: list",
+      "failed: 700: tweet 700: unexpected __typename in tweet-result payload: dict",
+      "failed: 900: tweet 900: unexpected __typename in tweet-result payload: list"
+    ],
+    "traceback": false,
+    "stderr_tail": [
+      "wrote 997 tweets to /tmp/tmp4vzo89ka/batch_async.jsonl"
+    ]
+  },
+  "clean_sync": {
+    "ids": 400,
+    "poison_ids": 0,
+    "exit": 0,
+    "seconds": 1.44,
+    "requests": 400,
+    "tweets_written": 400,
+    "ids_lost": 0,
+    "failures_reported": 0,
+    "failure_lines": [],
+    "traceback": false,
+    "stderr_tail": [
+      "wrote 400 tweets to /tmp/tmp4vzo89ka/batch_sync.jsonl"
+    ]
+  },
+  "poison_sync": {
+    "ids": 1000,
+    "poison_ids": 3,
+    "exit": 1,
+    "seconds": 3.18,
+    "requests": 1000,
+    "tweets_written": 997,
+    "ids_lost": 0,
+    "failures_reported": 3,
+    "failure_lines": [
+      "failed: 500: tweet 500: unexpected __typename in tweet-result payload: list",
+      "failed: 700: tweet 700: unexpected __typename in tweet-result payload: dict",
+      "failed: 900: tweet 900: unexpected __typename in tweet-result payload: list"
+    ],
+    "traceback": false,
+    "stderr_tail": [
+      "wrote 997 tweets to /tmp/tmp4vzo89ka/batch_sync.jsonl"
+    ]
+  },
+  "poison_sync_rerun": {
+    "ids": 1000,
+    "poison_ids": 3,
+    "exit": 1,
+    "seconds": 3.21,
+    "requests": 1000,
+    "tweets_written": 997,
+    "ids_lost": 0,
+    "failures_reported": 3,
+    "failure_lines": [
+      "failed: 500: tweet 500: unexpected __typename in tweet-result payload: list",
+      "failed: 700: tweet 700: unexpected __typename in tweet-result payload: dict",
+      "failed: 900: tweet 900: unexpected __typename in tweet-result payload: list"
+    ],
+    "traceback": false,
+    "stderr_tail": [
+      "wrote 997 tweets to /tmp/tmp4vzo89ka/batch_sync.jsonl"
+    ]
+  },
+  "candidates": {
+    "B_reset_in_ms": {
+      "exit": "timeout",
+      "seconds": 20.03,
+      "requests": 1,
+      "tweets_printed": 0
+    },
+    "C_store_clobber": {
+      "retweet_quote_after_user": [
+        40,
+        2
+      ],
+      "after_tweet_refetch": [
+        null,
+        null
+      ]
+    },
+    "D_format_without_output": {
+      "stdout_is_json": false,
+      "first_char": "2"
+    }
+  }
+}

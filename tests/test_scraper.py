@@ -4,6 +4,7 @@ import pytest
 
 from tests.conftest import FakeClient, FakeResponse
 from xscraper.http import NotFound
+from xscraper.parse import EmptyTimelineShell
 from xscraper.scraper import Scraper, parse_screen_name, parse_tweet_id
 from xscraper.token import syndication_token
 
@@ -147,3 +148,38 @@ def test_user_timelines_reports_each_failure(timeline_html):
 
     got = Scraper(FakeClient(handler), workers=4).user_timelines(["NASA", "nosuch", "bad name"])
     assert len(got[0]) == 3 and isinstance(got[1], NotFound) and isinstance(got[2], ValueError)
+
+
+def test_tweet_from_body_wraps_shape_errors(monkeypatch):
+    from xscraper import scraper as scraper_mod
+    from xscraper.parse import ParseError
+
+    def broken(data):
+        raise TypeError("unhashable type: 'list'")
+
+    monkeypatch.setattr(scraper_mod, "parse_tweet_result", broken)
+    with pytest.raises(ParseError, match="tweet 1834231234567890123") as info:
+        scraper_mod.tweet_from_body("1834231234567890123", b'{"id_str": "1"}')
+    assert isinstance(info.value.__cause__, TypeError)
+
+
+def test_tweet_from_body_leaves_other_errors_alone(monkeypatch):
+    # Only payload-shape errors become per-tweet failures; anything else
+    # (a bug, an interrupt) must still stop the run loudly.
+    from xscraper import scraper as scraper_mod
+
+    def broken(data):
+        raise RuntimeError("bug outside the payload")
+
+    monkeypatch.setattr(scraper_mod, "parse_tweet_result", broken)
+    with pytest.raises(RuntimeError):
+        scraper_mod.tweet_from_body("1", b'{"id_str": "1"}')
+
+
+def test_user_timeline_logged_out_shell(shell_html):
+    shell = lambda url, params: FakeResponse(200, shell_html)
+    with pytest.raises(EmptyTimelineShell):
+        Scraper(FakeClient(shell)).user_timeline("NASA")
+    assert Scraper(FakeClient(shell, logged_in=True)).user_timeline("NASA") == []
+    [got] = Scraper(FakeClient(shell)).user_timelines(["NASA"])
+    assert isinstance(got, EmptyTimelineShell)

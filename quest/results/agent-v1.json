@@ -1,0 +1,95 @@
+{
+  "src": "<agent worktree @0d2722a>",
+  "imported": "<agent worktree>/xscraper/__init__.py",
+  "python": "3.13.16",
+  "synthetic_mock": true,
+  "poison_ids": [
+    "500",
+    "700",
+    "900"
+  ],
+  "clean_async": {
+    "ids": 400,
+    "poison_ids": 0,
+    "exit": 0,
+    "seconds": 1.5,
+    "requests": 400,
+    "tweets_written": 400,
+    "ids_lost": 0,
+    "failures_reported": 0,
+    "traceback": false,
+    "stderr_tail": [
+      "wrote 400 tweets to /tmp/tmpcm5vv3lt/batch_async.jsonl"
+    ]
+  },
+  "poison_async": {
+    "ids": 1000,
+    "poison_ids": 3,
+    "exit": 0,
+    "seconds": 3.21,
+    "requests": 1000,
+    "tweets_written": 1000,
+    "ids_lost": -3,
+    "failures_reported": 0,
+    "traceback": false,
+    "stderr_tail": [
+      "wrote 1000 tweets to /tmp/tmpcm5vv3lt/batch_async.jsonl"
+    ]
+  },
+  "poison_async_rerun": {
+    "ids": 1000,
+    "poison_ids": 3,
+    "exit": 0,
+    "seconds": 3.19,
+    "requests": 1000,
+    "tweets_written": 1000,
+    "ids_lost": -3,
+    "failures_reported": 0,
+    "traceback": false,
+    "stderr_tail": [
+      "wrote 1000 tweets to /tmp/tmpcm5vv3lt/batch_async.jsonl"
+    ]
+  },
+  "clean_sync": {
+    "ids": 400,
+    "poison_ids": 0,
+    "exit": 0,
+    "seconds": 1.46,
+    "requests": 400,
+    "tweets_written": 400,
+    "ids_lost": 0,
+    "failures_reported": 0,
+    "traceback": false,
+    "stderr_tail": [
+      "wrote 400 tweets to /tmp/tmpcm5vv3lt/batch_sync.jsonl"
+    ]
+  },
+  "poison_sync": {
+    "ids": 1000,
+    "poison_ids": 3,
+    "exit": 0,
+    "seconds": 3.22,
+    "requests": 1000,
+    "tweets_written": 1000,
+    "ids_lost": -3,
+    "failures_reported": 0,
+    "traceback": false,
+    "stderr_tail": [
+      "wrote 1000 tweets to /tmp/tmpcm5vv3lt/batch_sync.jsonl"
+    ]
+  },
+  "poison_sync_rerun": {
+    "ids": 1000,
+    "poison_ids": 3,
+    "exit": 0,
+    "seconds": 3.24,
+    "requests": 1000,
+    "tweets_written": 1000,
+    "ids_lost": -3,
+    "failures_reported": 0,
+    "traceback": false,
+    "stderr_tail": [
+      "wrote 1000 tweets to /tmp/tmpcm5vv3lt/batch_sync.jsonl"
+    ]
+  }
+}

@@ -57,19 +57,35 @@ def tweet_params(tweet_id: str, lang: str) -> dict:
 
 
 def tweet_from_body(tweet_id: str, body: bytes) -> Optional[Tweet]:
-    """Parse a tweet-result response body; None when the tweet is unavailable."""
+    """Parse a tweet-result response body; None when the tweet is unavailable.
+
+    An empty body is not evidence that the tweet is gone (X answers deleted
+    tweets with 404 or a tombstone); it is a soft block or a glitch, so it
+    fails this attempt and may be retried. Treating it as "unavailable" made
+    watch mode report deletions that never happened.
+    """
     if not body.strip():
-        return None
+        raise ParseError(f"tweet {tweet_id}: empty response (soft block or endpoint glitch)")
     try:
         data = loads(body)
     except ValueError as exc:
         raise ParseError(f"tweet {tweet_id}: response was not JSON "
                          "(request blocked or endpoint changed)") from exc
-    return parse_tweet_result(data)
+    # Batch callers catch only HttpError and ParseError per tweet. Any other
+    # error raised while reading the payload would abort the whole batch, so
+    # data-shape errors become a ParseError for this one tweet. Errors from
+    # outside the parser (HTTP, output, our own scheduling) are not caught here.
+    try:
+        return parse_tweet_result(data)
+    except ParseError as exc:
+        raise ParseError(f"tweet {tweet_id}: {exc}") from exc
+    except (TypeError, ValueError, LookupError, AttributeError, ArithmeticError) as exc:
+        raise ParseError(f"tweet {tweet_id}: unexpected payload shape "
+                         f"({type(exc).__name__}: {exc})") from exc
 
 
-def timeline_from_page(page: str, include_retweets: bool) -> list[Tweet]:
-    tweets = parse_timeline_page(page)
+def timeline_from_page(page: str, include_retweets: bool, logged_in: bool = False) -> list[Tweet]:
+    tweets = parse_timeline_page(page, logged_in)
     if not include_retweets:
         tweets = [t for t in tweets if not t.is_retweet]
     return tweets
@@ -155,10 +171,15 @@ class Scraper:
         return list(reversed(chain))
 
     def user_timeline(self, screen_name: str, include_retweets: bool = True) -> list[Tweet]:
-        """Recent tweets from a profile, newest first."""
+        """Recent tweets from a profile, newest first.
+
+        Raises ``EmptyTimelineShell`` (a ``ParseError``) when X answers a request
+        without cookies with the widget's empty shell page.
+        """
         name = parse_screen_name(screen_name)
         resp = self.client.get(TIMELINE_ENDPOINT.format(name), params={"showReplies": "true"})
-        return timeline_from_page(resp.text, include_retweets)
+        # Clients that don't say whether they send cookies are taken as logged out.
+        return timeline_from_page(resp.text, include_retweets, getattr(self.client, "logged_in", False))
 
     def user_timelines(self, screen_names: Iterable[str], include_retweets: bool = True) -> list:
         """Timelines for several profiles fetched concurrently, in input order.

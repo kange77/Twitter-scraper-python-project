@@ -64,6 +64,11 @@ def test_proxy_rotation_and_cookies():
     assert c.session.headers["Cookie"] == "a=b"
 
 
+def test_logged_in_means_cookies_are_sent():
+    assert HttpClient(cookies="auth_token=x").logged_in
+    assert not HttpClient().logged_in
+
+
 def test_retry_after_parsing():
     assert retry_after_seconds(FakeResponse(429, headers={"Retry-After": "3"})) == 3
     assert retry_after_seconds(FakeResponse(429, headers={"x-rate-limit-reset": "1100"}), now=1000) == 100
@@ -142,3 +147,32 @@ def test_client_waits_for_reset_instead_of_drawing_a_429():
 def test_pool_is_sized_for_the_workers():
     c = HttpClient(pool_size=64)
     assert c.session.get_adapter("https://x.com")._pool_maxsize == 64
+
+
+def test_reset_in_milliseconds_is_ignored():
+    # Principal QA P2: a reset sent in milliseconds (decades away) used to
+    # hold every request forever, silently.
+    ms = str(int(1000 * 1000) + 60_000)
+    gate = RateGate(clock=Clock())
+    gate.enter()
+    gate.leave(200, limits(0, ms))
+    assert gate.enter() == 0
+    assert retry_after_seconds({"x-rate-limit-reset": ms}, now=1000.0) is None
+    assert retry_after_seconds({"Retry-After": "99999999"}, now=1000.0) is None
+    assert retry_after_seconds({"Retry-After": "120"}, now=1000.0) == 120
+
+
+def test_client_ignores_reset_in_milliseconds():
+    ms = str(int(1000 * 1000) + 60_000)
+    c, sleeps = client([FakeResponse(200, b"a", headers=limits(0, ms)), FakeResponse(200, b"b")])
+    c.get("https://x")
+    assert c.get("https://x").content == b"b"
+    assert not sleeps
+
+
+def test_no_request_waits_at_the_gate_forever():
+    c, sleeps = client([FakeResponse(200, b"never sent")])
+    c.gate.enter = lambda: 600.0  # a gate that re-arms on every pass
+    with pytest.raises(HttpError, match="rate-limit window"):
+        c.get("https://x")
+    assert 2 * c.gate.max_wait <= sum(sleeps) <= 2 * c.gate.max_wait + 10

@@ -20,6 +20,7 @@ rotation behave exactly as in :class:`xscraper.http.HttpClient`.
 from __future__ import annotations
 
 import asyncio
+import codecs
 import itertools
 import logging
 import random
@@ -31,7 +32,7 @@ from typing import AsyncIterator, Awaitable, Callable, Iterable, Optional, Seque
 import aiohttp
 from multidict import CIMultiDict, CIMultiDictProxy
 
-from .http import (GATE_JITTER, USER_AGENTS, HttpError, NotFound, RateGate, RateLimiter, backoff_delay, classify,
+from .http import (USER_AGENTS, HttpError, NotFound, RateGate, RateLimiter, backoff_delay, classify, gate_sleep_time,
                    give_up)
 from .models import Tweet
 from .parse import ParseError
@@ -52,6 +53,13 @@ class Response:
 
     @property
     def text(self) -> str:
+        # The charset comes from the server's Content-Type; a mislabelled page
+        # (proxy, CDN, captive portal) must not raise LookupError here.
+        try:
+            codecs.lookup(self.encoding)
+        except LookupError:
+            log.warning("unknown charset %r in response; decoding as utf-8", self.encoding)
+            return self.content.decode("utf-8", errors="replace")
         return self.content.decode(self.encoding, errors="replace")
 
 
@@ -71,7 +79,9 @@ class AsyncHttpClient:
         session: Optional[aiohttp.ClientSession] = None,
         sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
         clock: Callable[[], float] = time.time,
+        observer=None,
     ):
+        self.observer = observer  # see HttpClient
         self.headers = {"User-Agent": user_agent or random.choice(USER_AGENTS),
                         "Accept-Language": "en-US,en;q=0.9"}
         if cookies:
@@ -88,6 +98,11 @@ class AsyncHttpClient:
         self._session = session
         self._owns_session = session is None
         self._slots: Optional[asyncio.Semaphore] = None
+
+    @property
+    def logged_in(self) -> bool:
+        """True when requests carry a Cookie header (see ``parse.EmptyTimelineShell``)."""
+        return "Cookie" in self.headers
 
     @property
     def session(self) -> aiohttp.ClientSession:
@@ -116,17 +131,28 @@ class AsyncHttpClient:
         async with self._slots:
             # Checked after getting a slot, so requests queued behind a
             # rate-limit signal see it before they are sent.
+            obs = self.observer
+            waited = 0.0
             while (wait := self.gate.enter()) > 0:
-                await self._sleep(min(wait, self.max_backoff) + random.uniform(0, GATE_JITTER))
+                wait = gate_sleep_time(self.gate, wait, waited, self.max_backoff, url)
+                if obs is not None:
+                    obs.on_wait("server", wait)
+                await self._sleep(wait)
+                waited += wait
             proxy = next(self._proxies) if self._proxies else None
+            started = time.monotonic()
             try:
                 async with self.session.get(url, params=params, headers=headers, proxy=proxy) as r:
                     body = await r.read()
                     resp = Response(r.status, body, CIMultiDictProxy(CIMultiDict(r.headers)),
                                     r.charset or "utf-8")
-            except BaseException:
+            except BaseException as exc:
                 self.gate.leave()
+                if obs is not None and isinstance(exc, (aiohttp.ClientError, asyncio.TimeoutError)):
+                    obs.on_response(None, time.monotonic() - started, type(exc).__name__)
                 raise
+            if obs is not None:
+                obs.on_response(resp.status_code, time.monotonic() - started)
             resp.server_wait = self.gate.leave(resp.status_code, resp.headers)
             return resp
 
@@ -137,6 +163,8 @@ class AsyncHttpClient:
         for attempt in range(self.retries + 1):
             wait = self.limiter.reserve()
             if wait > 0:
+                if self.observer is not None:
+                    self.observer.on_wait("rate_limit", wait)
                 await self._sleep(wait)
             resp = None
             server_wait = None
@@ -152,6 +180,8 @@ class AsyncHttpClient:
                 last_error = error
             if attempt == self.retries:
                 break
+            if self.observer is not None:
+                self.observer.on_retry()
             if server_wait is not None:
                 log.warning("%s on %s; pausing requests for %.1fs (retry %d/%d)", last_error, url,
                             server_wait, attempt + 1, self.retries)
@@ -237,7 +267,7 @@ class AsyncScraper:
     async def user_timeline(self, screen_name: str, include_retweets: bool = True) -> list[Tweet]:
         name = parse_screen_name(screen_name)
         resp = await self.client.get(_sync.TIMELINE_ENDPOINT.format(name), params={"showReplies": "true"})
-        return timeline_from_page(resp.text, include_retweets)
+        return timeline_from_page(resp.text, include_retweets, getattr(self.client, "logged_in", False))
 
     async def user_timelines(self, screen_names: Iterable[str], include_retweets: bool = True) -> list:
         """Each profile's tweets (or the exception it raised), in input order."""

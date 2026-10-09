@@ -21,8 +21,19 @@ _WORDS = ("launch rocket moon mars data model release great team proud amazing s
           "failing support honestly thanks love wow orbit crew science").split()
 
 
+LINKS = False
+
+
 def _embed(tweet_id: str) -> dict:
     n = int(tweet_id)
+    links = {}
+    if LINKS and n > 1:
+        # Deterministic graph: most tweets reply to n // 2 and every 7th quotes n - 1,
+        # so any seed has a reply chain back to 1 and shared ancestors.
+        if n % 3:
+            links["in_reply_to_status_id_str"] = str(n // 2)
+        if n % 7 == 0:
+            links["quoted_tweet"] = {"id_str": str(n - 1)}
     words = " ".join(_WORDS[(n + i * 7) % len(_WORDS)] for i in range(12 + n % 20))
     text = f"{words} #Artemis @NASA https://t.co/abc{n % 1000}"
     return {
@@ -40,6 +51,7 @@ def _embed(tweet_id: str) -> dict:
                           "original_info": {"width": 1200, "height": 800}}],
         "edit_control": {"edit_tweet_ids": [tweet_id], "editable_until_msecs": "1",
                          "is_edit_eligible": False, "edits_remaining": "5"},
+        **links,
     }
 
 
@@ -80,18 +92,26 @@ class Limiter:
 
 class Stats:
     def __init__(self):
-        self.ok = self.limited = self.connections = 0
+        self.ok = self.limited = self.overloaded = self.connections = 0
+        self.in_flight = 0
 
 
-async def serve(port: int, latency: float, limiter: Limiter | None, stats: Stats) -> None:
+async def serve(port: int, latency: float, limiter: Limiter | None, stats: Stats,
+                overload: int | None = None) -> None:
     async def handle(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
         stats.connections += 1
         try:
             while True:
                 head = await reader.readuntil(b"\r\n\r\n")
                 target = head.split(b" ", 2)[1].decode()
-                if latency:
-                    await asyncio.sleep(latency)
+                stats.in_flight += 1
+                busy = overload is not None and stats.in_flight > overload
+                try:
+                    if latency:
+                        # An overloaded server slows down as well as failing.
+                        await asyncio.sleep(latency * (3 if busy else 1))
+                finally:
+                    stats.in_flight -= 1
                 status, ctype, body, extra = 200, "application/json", b"", {}
                 allowed = True
                 if limiter and not target.startswith("/__stats"):
@@ -101,7 +121,10 @@ async def serve(port: int, latency: float, limiter: Limiter | None, stats: Stats
                     allowed, status = True, 200
                     body = json.dumps(vars(stats)).encode()
                     if "reset" in url.query:
-                        stats.ok = stats.limited = 0
+                        stats.ok = stats.limited = stats.overloaded = 0
+                elif busy:
+                    status, body = 503, b'{"errors":[{"message":"Over capacity"}]}'
+                    stats.overloaded += 1
                 elif not allowed:
                     status, body = 429, b'{"errors":[{"code":88,"message":"Rate limit exceeded"}]}'
                     stats.limited += 1
@@ -137,10 +160,16 @@ def main() -> None:
     p.add_argument("--latency", type=float, default=0.0, help="seconds added to every response")
     p.add_argument("--limit", type=int, help="requests allowed per window (default: unlimited)")
     p.add_argument("--window", type=float, default=10.0, help="rate-limit window in seconds")
+    p.add_argument("--overload", type=int,
+                   help="answer 503 (slowly) while more than this many requests are in flight")
+    p.add_argument("--links", action="store_true",
+                   help="give tweets reply parents and quotes, for crawl benchmarks")
     args = p.parse_args()
     limiter = Limiter(args.limit, args.window) if args.limit else None
+    global LINKS
+    LINKS = args.links
     try:
-        asyncio.run(serve(args.port, args.latency, limiter, Stats()))
+        asyncio.run(serve(args.port, args.latency, limiter, Stats(), args.overload))
     except KeyboardInterrupt:
         pass
 

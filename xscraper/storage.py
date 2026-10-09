@@ -153,9 +153,9 @@ def load(path: str | Path, fmt: Optional[str] = None) -> list[Tweet]:
 class TweetStore:
     """SQLite store keyed by tweet ID, so repeated scrapes only add what's new."""
 
-    def __init__(self, path: str | Path):
+    def __init__(self, path: str | Path, timeout: float = 5.0):
         Path(path).parent.mkdir(parents=True, exist_ok=True)
-        self.conn = sqlite3.connect(str(path))
+        self.conn = sqlite3.connect(str(path), timeout=timeout)
         try:
             self.conn.execute(
                 """CREATE TABLE IF NOT EXISTS tweets (

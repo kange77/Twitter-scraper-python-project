@@ -3,10 +3,13 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import contextlib
+import json
 import logging
 import math
 import os
 import random
+import signal
 import sys
 import time
 from collections import Counter
@@ -18,11 +21,19 @@ from .analysis import ENGINES, Analyzer, near_duplicate_groups
 from .http import HttpClient, HttpError
 from .models import Tweet
 from .parse import ParseError
-from .scraper import Scraper, parse_tweet_id
+from .crawl import Crawler
+from .metrics import AdaptiveLimit, Metrics
+from .shared import SharedRateGate, SharedRateLimiter
+from .watch import JsonlSink, WatchStore, Watcher, WebhookSink, parse_duration
+from .jobs import TWEET, USER, Item, JobStore, parse_follow
+from . import scraper as _scraper_mod
+from .scraper import Scraper, parse_screen_name, parse_tweet_id
 from .storage import FORMATS, TweetWriter, export, load
 
 # Tweets are analysed and written in chunks of this size while a batch streams in.
 CHUNK = 500
+# Polling a profile more often than this gains nothing (X caches the widget) and costs budget.
+MIN_WATCH_INTERVAL = 60.0
 
 
 def _have_aiohttp() -> bool:
@@ -91,6 +102,71 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--limit", type=int, help="keep at most N tweets per user")
     _add_network_args(p)
     _add_output_args(p)
+
+    p = sub.add_parser("crawl", help="run a resumable crawl job stored in a SQLite file",
+                       description="Fetch seeds and, optionally, the tweets they reply to, quote or "
+                                   "retweet. Progress lives in JOB, so an interrupted crawl resumes "
+                                   "where it stopped, and several crawl processes can share one JOB.")
+    p.add_argument("job", metavar="JOB.db", help="job file (created if missing)")
+    p.add_argument("seeds", nargs="*", metavar="SEED",
+                   help="tweet ID/URL, or @name / profile URL for a profile's timeline")
+    p.add_argument("-i", "--input", dest="input_file", metavar="FILE",
+                   help="read seeds from FILE, one per line ('-' for stdin)")
+    p.add_argument("--follow", help="links to follow: parents,quotes,retweets | all | none "
+                                    "(default: none, or the job's stored setting)")
+    p.add_argument("--depth", type=int, help="how many links away from a seed to go (default 0, or stored)")
+    p.add_argument("--max-attempts", type=int,
+                   help="attempts per item before it is parked as failed (default 3, or stored)")
+    p.add_argument("--max-items", type=int, help="stop after this many items (the rest stay queued)")
+    p.add_argument("--no-run", action="store_true", help="only add the seeds and settings")
+    g = p.add_argument_group("monitoring")
+    g.add_argument("--progress", type=float, default=10.0, metavar="SECONDS",
+                   help="print a progress line this often (default 10; 0 to disable)")
+    g.add_argument("--stats-file", metavar="FILE", help="write run statistics as JSON to FILE (kept current)")
+    g.add_argument("--metrics-port", type=int, metavar="PORT",
+                   help="serve Prometheus /metrics, JSON /stats and /healthz on 127.0.0.1:PORT")
+    g.add_argument("--no-adaptive", action="store_true",
+                   help="keep --workers requests in flight even when the server signals overload")
+    p.add_argument("--processes", type=int, default=1, metavar="N",
+                   help="crawler processes to run on this job (default 1). They share the job's "
+                        "rate budget, so this adds CPU for parsing and storing, not requests/s")
+    _add_network_args(p)
+    # The job remembers its rate; --rate changes it for every process on the job.
+    p.set_defaults(rate=None)
+
+    p = sub.add_parser("watch", help="poll profiles and tweets on a schedule and report what changed",
+                       description="Keeps polling its targets and emits new / edited / deleted / "
+                                   "engagement events. State lives in STATE.db, so a watch can be "
+                                   "stopped and restarted; targets given once are remembered.")
+    p.add_argument("state", metavar="STATE.db")
+    p.add_argument("targets", nargs="*", metavar="TARGET",
+                   help="@name or profile URL to poll its timeline; tweet ID or URL to poll that tweet")
+    p.add_argument("--every", default="15m",
+                   help=f"poll interval for the given targets (default 15m, minimum {MIN_WATCH_INTERVAL:.0f}s)")
+    p.add_argument("--track", default="0", metavar="DURATION",
+                   help="re-check each new tweet by ID for this long (e.g. 48h) to catch edits, deletions "
+                        "and engagement changes; costs one request per tracked tweet per --recheck")
+    p.add_argument("--recheck", metavar="DURATION", help="re-check interval for tracked tweets (default --every)")
+    p.add_argument("--engagement-change", type=float, metavar="PCT",
+                   help="emit an engagement event when a count moves by PCT percent")
+    p.add_argument("--events", metavar="FILE", help="append events to FILE as JSON Lines")
+    p.add_argument("--webhook", metavar="URL",
+                   help="POST events to URL as {\"events\": [...]}; undelivered events are retried")
+    p.add_argument("--once", action="store_true", help="poll what's due once and exit")
+    p.add_argument("--unwatch", action="store_true", help="stop watching the given targets and exit")
+    p.add_argument("--status", action="store_true", help="show targets and counts and exit")
+    p.add_argument("--history", metavar="TWEET_ID", help="print a tweet's engagement history and exit")
+    p.add_argument("--metrics-port", type=int, metavar="PORT",
+                   help="serve Prometheus /metrics, JSON /stats and /healthz on 127.0.0.1:PORT")
+    _add_network_args(p)
+
+    p = sub.add_parser("job", help="inspect or manage a crawl job")
+    p.add_argument("action", choices=("status", "retry", "export"),
+                   help="status: progress and workers; retry: requeue failed items; "
+                        "export: write the job's tweets to -o")
+    p.add_argument("job", metavar="JOB.db")
+    p.add_argument("-o", "--output", help="export destination (.json/.jsonl/.csv/.db)")
+    p.add_argument("--format", choices=FORMATS)
 
     p = sub.add_parser("analyze", help="analyse tweets saved as .json/.jsonl/.db")
     p.add_argument("input")
@@ -293,8 +369,10 @@ def cmd_user(args) -> int:
             failures += 1
             continue
         if not got:
-            print(f"@{name}: no tweets returned (X serves this widget inconsistently; "
-                  "try again later or pass --cookies)", file=sys.stderr)
+            # The empty shell raises EmptyTimelineShell above; this is a page
+            # that really listed nothing, or one sent with cookies X didn't accept.
+            hint = "check that the cookies are a current session" if args.cookies else "try again later"
+            print(f"@{name}: no tweets returned (the profile may have none; {hint})", file=sys.stderr)
         tweets.extend(got[:args.limit] if args.limit else got)
     _finish(tweets, args, args.analyze)
     return 1 if failures else 0
@@ -382,8 +460,356 @@ def cmd_bench(args) -> int:
     return 0
 
 
-COMMANDS = {"tweet": cmd_tweet, "thread": cmd_thread, "user": cmd_user,
-            "analyze": cmd_analyze, "bench": cmd_bench}
+def _seed(value: str) -> Item:
+    """Numeric IDs and status URLs are tweets; @names, bare names and profile URLs are profiles."""
+    v = value.strip()
+    try:
+        return Item(TWEET, parse_tweet_id(v))
+    except ValueError:
+        return Item(USER, parse_screen_name(v))
+
+
+def _share_limits(client, args) -> None:
+    """Swap the client's rate limiter and gate for ones every process on the job shares."""
+    kw = _client_kwargs(args)
+    path = getattr(args, "job", None) or args.state
+    client.limiter = SharedRateLimiter(path, kw["rate"], kw["burst"])
+    client.gate = SharedRateGate(path)
+
+
+def _fetchers(args, stack: contextlib.AsyncExitStack, observer=None):
+    """Coroutines that fetch one tweet / one timeline with the chosen HTTP engine."""
+    include_retweets = True
+    if _use_async(args):
+        from .aio import AsyncHttpClient, AsyncScraper
+
+        async def open_async():
+            client = await stack.enter_async_context(
+                AsyncHttpClient(concurrency=args.workers, observer=observer, **_client_kwargs(args)))
+            _share_limits(client, args)
+            scraper = AsyncScraper(client, lang=args.lang)
+            return scraper.tweet, lambda name: scraper.user_timeline(name, include_retweets)
+        return open_async()
+
+    client = _client(args)
+    client.observer = observer
+    _share_limits(client, args)
+    scraper = Scraper(client, lang=args.lang, workers=args.workers)
+
+    async def open_sync():
+        async def tweet(key):
+            return await asyncio.to_thread(scraper.tweet, key)
+
+        async def user(name):
+            return await asyncio.to_thread(scraper.user_timeline, name, include_retweets)
+        return tweet, user
+    return open_sync()
+
+
+def cmd_crawl(args) -> int:
+    seeds = [_seed(v) for v in (_refs(args, args.seeds) if args.seeds or args.input_file else [])]
+    with JobStore(args.job) as store:
+        cfg = store.configure(
+            follow=parse_follow(args.follow) if args.follow is not None else None,
+            max_depth=args.depth, max_attempts=args.max_attempts, rate=args.rate)
+        args.rate = cfg.rate
+        if store.expanded:
+            print(f"queued {store.expanded} links from items already crawled (wider --depth or --follow)",
+                  file=sys.stderr)
+        added = store.add(seeds)
+        if seeds:
+            print(f"queued {added} new seeds ({len(seeds) - added} already in the job)", file=sys.stderr)
+        if args.no_run:
+            return 0
+        if not any(store.counts()[s] for s in ("pending", "leased")):
+            print("nothing to crawl: the job has no queued items (add seeds, or `xscraper job retry`)",
+                  file=sys.stderr)
+            return 0 if store.counts()["done"] else 1
+        logging.getLogger("xscraper").info(
+            "crawl settings: follow=%s depth=%d max-attempts=%d rate=%g/s",
+            ",".join(cfg.follow) or "none", cfg.max_depth, cfg.max_attempts, cfg.rate)
+        helpers = _spawn_helpers(args)
+
+        metrics = Metrics()
+        limit = None if args.no_adaptive else AdaptiveLimit(args.workers)
+        metrics.limit = limit
+        server = metrics.serve(args.metrics_port) if args.metrics_port else None
+
+        def progress() -> None:
+            if args.progress:
+                print(metrics.progress_line(), file=sys.stderr)
+            _write_stats(args.stats_file, metrics)
+
+        crawler: Optional[Crawler] = None
+
+        async def run() -> dict:
+            nonlocal crawler
+            async with contextlib.AsyncExitStack() as stack:
+                fetch_tweet, fetch_user = await _fetchers(args, stack, metrics)
+                crawler = Crawler(store, fetch_tweet, fetch_user, concurrency=args.workers, limit=limit,
+                                  observer=metrics, progress=progress,
+                                  progress_interval=args.progress or 5.0)
+                # SIGTERM (systemd, Docker, Kubernetes) stops the crawl like Ctrl-C:
+                # in-flight items finish, outcomes are flushed, leases handed back.
+                with _on_signal(signal.SIGTERM, crawler.stop):
+                    return await crawler.run(max_items=args.max_items)
+
+        start = time.perf_counter()
+        try:
+            totals = asyncio.run(run())
+            if crawler is not None and crawler.stopped:
+                for h in helpers:
+                    h.terminate()  # they stop the same way: finish, flush, release
+            for h in helpers:
+                h.join()
+        finally:
+            for h in helpers:
+                h.join(timeout=30)
+            _write_stats(args.stats_file, metrics)
+            if server is not None:
+                server.shutdown()
+        elapsed = time.perf_counter() - start
+        if getattr(args, "quiet", False):
+            return 0
+        stopped = crawler is not None and crawler.stopped
+        crashed = [h for h in helpers if h.exitcode not in (0, None) and not (stopped and h.exitcode == -signal.SIGTERM)]
+        if helpers:
+            print(f"{len(helpers) + 1} processes; totals below are this process's share", file=sys.stderr)
+        items = totals["done"] + totals["missing"] + totals["failed"] + totals["retry"]
+        print(f"crawled {items:,} items in {elapsed:.1f}s: {totals['done']:,} done, "
+              f"{totals['missing']:,} unavailable, {totals['retry']:,} to retry, {totals['failed']:,} failed; "
+              f"{totals['stored']:,} new tweets stored, {totals['queued']:,} links queued", file=sys.stderr)
+        if metrics.drift.alerts:
+            print("warning: payload drift suspected (" + ", ".join(sorted(metrics.drift.alerts))
+                  + "); X may have changed a payload shape", file=sys.stderr)
+        _print_job(store)
+        return _crawl_exit(store.counts(), stopped, [(h.pid, h.exitcode) for h in crashed],
+                           args.max_items, args.job)
+
+
+def _crawl_exit(counts: dict, stopped: bool, crashed: list, max_items: Optional[int], job: str) -> int:
+    """The crawl's exit status; says why on stderr when it isn't a clean finish.
+
+    0 only when the job is finished and nothing failed. A crashed helper,
+    failed items, or items still queued or leased (unless --max-items cut
+    the run short on purpose) give 1; a SIGTERM stop gives 143.
+    """
+    for pid, code in crashed:
+        print(f"error: crawler process {pid} exited with code {code}; its work was handed back",
+              file=sys.stderr)
+    left = counts["pending"] + counts["leased"]
+    if stopped:
+        print(f"stopped by signal with {left:,} items left; run `xscraper crawl {job}` to resume",
+              file=sys.stderr)
+        return 128 + signal.SIGTERM
+    if left and max_items is None:
+        print(f"error: {left:,} items are still queued or leased; run `xscraper crawl {job}` to resume",
+              file=sys.stderr)
+        return 1
+    return 1 if counts["failed"] or crashed else 0
+
+
+@contextlib.contextmanager
+def _on_signal(sig, callback):
+    """Call ``callback`` on ``sig`` while the block runs (inside a running event loop)."""
+    loop = asyncio.get_running_loop()
+    try:
+        loop.add_signal_handler(sig, callback)
+    except (NotImplementedError, RuntimeError, ValueError):  # Windows, or not the main thread
+        yield
+        return
+    try:
+        yield
+    finally:
+        loop.remove_signal_handler(sig)
+
+
+def _print_event(e) -> None:
+    who = f"@{e.screen_name} " if e.screen_name else ""
+    if e.type == "new":
+        detail = e.data["tweet"]["text"]
+    elif e.type == "edited":
+        detail = f"{e.data['old_text']!r} -> {e.data['text']!r}"
+    elif e.type == "deleted":
+        detail = e.data.get("last_text") or ""
+    elif e.type == "engagement":
+        detail = ", ".join(f"{k.replace('_count', 's')} {v['from']:,} -> {v['to']:,}"
+                           for k, v in e.data["change"].items())
+    else:
+        detail = ""
+    detail = " ".join(detail.split())
+    print(f"{e.type:<10} {who}{e.tweet_id}  {detail[:100]}")
+
+
+def cmd_watch(args) -> int:
+    with WatchStore(args.state) as store:
+        if args.history:
+            rows = store.history(parse_tweet_id(args.history))
+            if not rows:
+                print(f"no history for {args.history}", file=sys.stderr)
+                return 1
+            print("time                  likes   retweets   replies   quotes")
+            for ts, *counts in rows:
+                print(f"{time.strftime('%Y-%m-%d %H:%M:%S', time.gmtime(ts))}  "
+                      + "  ".join(f"{_count(c):>8}" for c in counts))
+            return 0
+        targets = [_seed(v) for v in args.targets]
+        if args.unwatch:
+            for t in targets:
+                if not store.remove_target(t.kind, t.key):
+                    print(f"not watched: {t.kind} {t.key}", file=sys.stderr)
+            return 0
+        every = parse_duration(args.every)
+        if every < MIN_WATCH_INTERVAL:
+            raise ValueError(f"--every must be at least {MIN_WATCH_INTERVAL:.0f}s")
+        for t in targets:
+            store.add_target(t.kind, t.key, every)
+        if args.status:
+            summary = store.summary()
+            now = time.time()
+            for kind, key, ev, next_due, err in store.targets():
+                due = "now" if next_due <= now else f"in {next_due - now:.0f}s"
+                print(f"{kind} {key}: every {ev:.0f}s, next poll {due}" + (f", last error: {err}" if err else ""))
+            print(f"tracked tweets: {summary['tracked']}; events: {summary['events']}; "
+                  f"undelivered to webhook: {summary['undelivered']}; snapshots: {summary['snapshots']}")
+            return 0
+        if not store.targets():
+            raise ValueError("nothing to watch: give @names or tweet IDs")
+        track_for = parse_duration(args.track)
+        recheck = parse_duration(args.recheck) if args.recheck else every
+        if track_for and recheck < MIN_WATCH_INTERVAL:
+            raise ValueError(f"--recheck must be at least {MIN_WATCH_INTERVAL:.0f}s")
+        sinks: list = []
+        if args.events:
+            sinks.append(JsonlSink(args.events))
+        if args.webhook:
+            sinks.append(WebhookSink(args.webhook, timeout=args.timeout))
+        metrics = Metrics()
+        server = metrics.serve(args.metrics_port) if args.metrics_port else None
+
+        def on_cycle(events) -> None:
+            for e in events:
+                _print_event(e)
+            sys.stdout.flush()
+
+        async def run() -> None:
+            async with contextlib.AsyncExitStack() as stack:
+                fetch_tweet, fetch_user = await _fetchers(args, stack, metrics)
+                watcher = Watcher(store, fetch_tweet, fetch_user, sinks=sinks, track_for=track_for,
+                                  recheck=recheck if track_for else None,
+                                  engagement_change=None if args.engagement_change is None
+                                  else args.engagement_change / 100,
+                                  concurrency=args.workers, observer=metrics)
+                await watcher.run(once=args.once, on_cycle=on_cycle)
+
+        try:
+            asyncio.run(run())
+        finally:
+            if server is not None:
+                server.shutdown()
+        if metrics.drift.alerts:
+            print("warning: payload drift suspected (" + ", ".join(sorted(metrics.drift.alerts))
+                  + "); X may have changed a payload shape", file=sys.stderr)
+        errors = [t for t in store.targets() if t[4]]
+        for kind, key, _, _, err in errors:
+            print(f"{kind} {key}: {err}", file=sys.stderr)
+    return 1 if errors else 0
+
+
+def _helper_main(args) -> None:
+    """Entry point of an extra crawler process started by --processes."""
+    logging.basicConfig(level=logging.WARNING - 10 * min(args.verbose, 2),
+                        format="%(levelname)s %(name)s: %(message)s")
+    # Carry over endpoint overrides (tests and benchmarks point these at a mock).
+    _scraper_mod.TWEET_ENDPOINT, _scraper_mod.TIMELINE_ENDPOINT = args.endpoints
+    try:
+        cmd_crawl(args)
+    except KeyboardInterrupt:
+        pass
+
+
+def _spawn_helpers(args) -> list:
+    if args.processes <= 1:
+        return []
+    import copy
+    import multiprocessing
+
+    ctx = multiprocessing.get_context("spawn")  # no inherited threads, event loops or connections
+    helper_args = copy.copy(args)
+    helper_args.seeds, helper_args.input_file = [], None  # the parent already queued them
+    helper_args.follow = helper_args.depth = helper_args.max_attempts = None
+    helper_args.processes, helper_args.progress = 1, 0
+    helper_args.stats_file = helper_args.metrics_port = None
+    helper_args.quiet = True
+    helper_args.endpoints = (_scraper_mod.TWEET_ENDPOINT, _scraper_mod.TIMELINE_ENDPOINT)
+    procs = [ctx.Process(target=_helper_main, args=(helper_args,), name=f"xscraper-crawl-{i + 1}")
+             for i in range(args.processes - 1)]
+    for p in procs:
+        p.start()
+    return procs
+
+
+def _write_stats(path: Optional[str], metrics: Metrics) -> None:
+    if not path:
+        return
+    tmp = f"{path}.tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(metrics.snapshot(), f, indent=2)
+    os.replace(tmp, path)  # readers never see a half-written file
+
+
+def _print_job(store: JobStore) -> None:
+    c = store.counts()
+    total = sum(c.values())
+    print(f"job {store.path}: {total:,} items | " + " | ".join(f"{s} {c[s]:,}" for s in c)
+          + f" | {len(store.tweets):,} tweets stored", file=sys.stderr)
+
+
+def cmd_job(args) -> int:
+    if not os.path.isfile(args.job):
+        raise ValueError(f"no such job: {args.job}")
+    with JobStore(args.job) as store:
+        if args.action == "retry":
+            print(f"requeued {store.retry_failed():,} failed items", file=sys.stderr)
+            return 0
+        if args.action == "export":
+            if not args.output:
+                raise ValueError("job export needs -o FILE")
+            with TweetWriter(args.output, args.format) as writer:
+                batch: list[Tweet] = []
+                for t in store.tweets:
+                    batch.append(t)
+                    if len(batch) >= CHUNK:
+                        writer.write(batch)
+                        batch = []
+                writer.write(batch)
+            print(f"wrote {writer.written:,} tweets to {args.output}", file=sys.stderr)
+            return 0
+        cfg = store.config
+        print(f"settings: follow={','.join(cfg.follow) or 'none'} depth={cfg.max_depth} "
+              f"max-attempts={cfg.max_attempts}")
+        c = store.counts()
+        print("items: " + ", ".join(f"{s} {c[s]:,}" for s in c) + f"; tweets stored: {len(store.tweets):,}")
+        now = time.time()
+        for w in store.workers():
+            line = f"worker {w['id']}: last heartbeat {now - w['heartbeat']:.0f}s ago"
+            st = w["stats"]
+            if st:
+                line += (f", {st['items'].get('done', 0):,} done, {st['items_per_s']:,.0f} items/s, "
+                         f"{st['responses'].get('429', 0)} × 429")
+                if st.get("drift_alerts"):
+                    line += ", DRIFT: " + ",".join(st["drift_alerts"])
+            print(line)
+        failures = store.failures(10)
+        if failures:
+            print("recent failures:")
+            for kind, key, attempts, err in failures:
+                print(f"  {kind} {key} ({attempts} attempts): {err}")
+    return 0
+
+
+COMMANDS = {"tweet": cmd_tweet, "thread": cmd_thread, "user": cmd_user, "crawl": cmd_crawl,
+            "watch": cmd_watch, "job": cmd_job, "analyze": cmd_analyze, "bench": cmd_bench}
 
 
 def main(argv: Optional[Sequence[str]] = None) -> int:

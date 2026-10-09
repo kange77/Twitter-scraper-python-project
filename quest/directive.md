@@ -1,8 +1,10 @@
 # directive.md: final working instructions and results
 
-**Candidate:** Karimi · **Repo:** [kange77/Twitter-scraper-python-project](https://github.com/kange77/Twitter-scraper-python-project) (public, MIT, my own) · **Branch:** [`claude/quest-quality-fix-r0t0ss`](https://github.com/kange77/Twitter-scraper-python-project/tree/claude/quest-quality-fix-r0t0ss) · **PR:** [#5](https://github.com/kange77/Twitter-scraper-python-project/pull/5) (merged into `main` by Karimi on 2026-10-09)
+**Candidate:** Karimi · **Repo:** [kange77/Twitter-scraper-python-project](https://github.com/kange77/Twitter-scraper-python-project) (public, MIT, my own) · **Branch:** [`quest`](https://github.com/kange77/Twitter-scraper-python-project/tree/quest) · **PR:** [#5](https://github.com/kange77/Twitter-scraper-python-project/pull/5) (merged into `main` by Karimi on 2026-10-09)
 
 > **Note on `main`:** in these documents, "`main`" means `main` as it was before this change: commit `4585f8f`. On 2026-10-09 this PR, and separately the crawl/watch work outside this Quest (PRs #6–#8), were merged into `main`, so use `4585f8f` to reproduce the "before" state.
+
+New here? [README.md](README.md) has a 3-minute reproduction and a map of everything.
 
 This is the final version of the instructions given to the AI coding agent, developed from [intent.md](intent.md). The first version, which the agent actually worked from, is [directive-v1.md](directive-v1.md). What changed between the two is under "Changes from v1" below.
 
@@ -63,7 +65,7 @@ All lines of [yardstick.md](yardstick.md) hold, with evidence linked in the appe
 ## A. Artifacts
 | Artifact | Link |
 |---|---|
-| Runnable repository (branch) | https://github.com/kange77/Twitter-scraper-python-project/tree/claude/quest-quality-fix-r0t0ss |
+| Runnable repository (branch) | https://github.com/kange77/Twitter-scraper-python-project/tree/quest |
 | Focused diff (2 source files, +17/−2 lines; tests +72, plus the 51-line yardstick gate added 2026-10-08) | [Compare `8d25838...4181442`](https://github.com/kange77/Twitter-scraper-python-project/compare/8d25838...4181442) (the agent's commit plus the review correction; the source change is `parse.py` +6/−1 and `scraper.py` +11/−1, and the rest is tests and `quest/` evidence), or `git diff 8d25838 4181442 -- xscraper tests` |
 | Why this problem (alternatives, scores, baseline, non-goals) | [intent.md](intent.md) |
 | Quality yardstick | [yardstick.md](yardstick.md) |
@@ -74,10 +76,10 @@ All lines of [yardstick.md](yardstick.md) hold, with evidence linked in the appe
 | Decision record | [decision-record.md](decision-record.md) |
 | Quality metrics, review checklist and handoff note | [handoff.md](handoff.md) |
 | Handoff demonstration (self-performed) | [review/handoff-demo.md](review/handoff-demo.md) |
-| Pre-existing evidence (2026-09-29, unchanged copies) | [prior-work/xscraper-review.md](prior-work/xscraper-review.md) · [prior-work/principal-qa.md](prior-work/principal-qa.md) |
+| Pre-existing evidence (2026-09-29, unchanged copies) | [prior-work/](prior-work/README.md): both review reports, their reproduction scripts and the mock server |
 | Loom outline | [loom-script.md](loom-script.md) |
 | **Directive experiment** (v1 vs final, 3 fresh agents each, scored mechanically) | [experiment/README.md](experiment/README.md) |
-| **Yardstick as a CI gate** (runs in the existing `pytest` job) | [tests/test_yardstick.py](https://github.com/kange77/Twitter-scraper-python-project/blob/claude/quest-quality-fix-r0t0ss/tests/test_yardstick.py) |
+| **Yardstick as a CI gate** (runs in the existing `pytest` job) | [tests/test_yardstick.py](https://github.com/kange77/Twitter-scraper-python-project/blob/quest/tests/test_yardstick.py) |
 | Agent roles, rules and collaboration (optional) | [agents.md](agents.md) |
 | Lasting facts, decisions and gotchas for the flow (optional) | [memory.md](memory.md) |
 
@@ -87,7 +89,7 @@ Commits on the branch, in order: `8d25838` yardstick, directive v1 and check scr
 ```bash
 git clone https://github.com/kange77/Twitter-scraper-python-project && cd Twitter-scraper-python-project
 python -m venv .venv && . .venv/bin/activate
-git checkout claude/quest-quality-fix-r0t0ss && pip install -e ".[dev]"
+git checkout quest && pip install -e ".[dev]"
 python -m pytest -q                                   # 183 passed (178 + 5 yardstick gate tests)
 git worktree add ../xs-main 4585f8f                   # the "before" code (main before this change)
 python quest/checks.py --src ../xs-main --candidates  # before: ids_lost 498, traceback

@@ -1,6 +1,6 @@
 # agents.md: how AI agents were used on this Quest
 
-Optional Quest document. It records the agents' context, rules and roles, and how they worked with Karimi. It covers the Quest change only: the `xscraper tweet` batch flow on branch `claude/quest-quality-fix-r0t0ss` (draft PR #5).
+Optional Quest document. It records the agents' context, rules and roles, and how they worked with Karimi. It covers the Quest change only: the `xscraper tweet` batch flow on branch `quest` (merged into `main` as PR #5 on 2026-10-09).
 
 ## Roles
 

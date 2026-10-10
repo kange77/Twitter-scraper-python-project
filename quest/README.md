@@ -14,7 +14,7 @@ git checkout quest && python -m venv .venv && . .venv/bin/activate && pip instal
 python -m pytest -q                                   # 183 passed, including the yardstick gate
 git worktree add ../before 4585f8f
 python quest/checks.py --src ../before                # before: 498 good tweets lost, traceback
-python quest/checks.py --src .                        # after: 0 lost, 3 bad IDs named, exit 1
+python quest/checks.py --src .                        # after: 0 lost, 3 bad IDs named, CLI exit 1
 ```
 
 **Map**

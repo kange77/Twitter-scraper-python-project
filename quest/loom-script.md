@@ -1,6 +1,6 @@
 # Loom outline (max 5 minutes)
 
-> A script for Karimi to record in their own words. It was drafted by an AI agent; reword it so it sounds like you. Times are targets. Have a terminal open in the repo with the venv active and `../xs-main` checked out (see directive.md §B).
+> A script for Karimi to record in their own words. It was drafted by an AI agent; reword it so it sounds like you. Times are targets. Have a terminal open in the repo with the venv active and `../before` (commit `4585f8f`) checked out; directive.md §B has the setup.
 
 ## 0:00–0:40 · The problem and why it ranked first
 - "This is my scraper, xscraper. I scoped the Quest to one flow: `xscraper tweet` fetching IDs in a batch."
@@ -10,7 +10,7 @@
 
 ## 0:40–1:40 · Demonstrate before and after
 ```bash
-python quest/checks.py --src ../xs-main | head -40   # poison_async: ids_lost 498, traceback true
+python quest/checks.py --src ../before | head -40   # poison_async: ids_lost 498, traceback true
 python quest/checks.py --src .          | head -40   # ids_lost 0, failures_reported 3, exit 1
 ```
 - Point at `failure_lines`: each bad ID is named.
@@ -29,7 +29,7 @@ python quest/checks.py --src .          | head -40   # ids_lost 0, failures_repo
 
 ## 3:50–4:50 · How I used AI, my decisions, limitations
 - AI: one agent implemented from directive v1, and another drafted the measurements, review and docs.
-- What I checked: I had the suite and `checks.py` re-run on my machine, then commissioned the directive experiment (v1 0/3, final 3/3) and an independent review.
+- What I checked: I had the suite and `checks.py` re-run on my machine, then commissioned the directive experiment (v1 0/3, final 3/3) and three independent cold reviews.
 - My decisions: the repo and scope, problem A over B, C and D, the scores, and rejecting blank tweets.
 - Limitations: no live X, a synthetic payload, one machine, a self-performed handoff, and an AI reviewer that you then reviewed.
 

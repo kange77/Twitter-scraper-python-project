@@ -1,6 +1,6 @@
 # Prior work (pre-existing, not part of the Quest change)
 
-Everything in this folder **predates the Quest**. The files were copied **unchanged** on 2026-10-09 from Karimi's local project folder, so the evidence that `intent.md` relies on can be checked.
+Everything in this folder **predates the Quest**. The two reports were added **unchanged** with the Quest documents on 2026-10-06. The scripts, the mock server and the maturity ladder were copied **unchanged** from Karimi's local project folder on 2026-10-09, so the evidence that `intent.md` relies on can be checked.
 
 | File | What it is | Written |
 |---|---|---|

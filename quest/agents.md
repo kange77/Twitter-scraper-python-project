@@ -31,9 +31,9 @@ The implementing agent got only the directive on purpose, to test whether the di
 |---|---|---|---|
 | 1. Comparison, baseline, yardstick, directive v1, check script | Thread agent | `intent.md` draft, `yardstick.md`, `directive-v1.md`, `checks.py`, `results/before.json` | `8d25838` |
 | 2. Implementation from directive v1 | Implementing agent | Fix plus tests, unedited | `c004558` |
-| 3. Review against the yardstick | Thread agent | **Rejected** "treat a bad `__typename` as an ordinary tweet" (blank tweets, exit 0); replaced the tests with ones using the real shape | `4181442` |
+| 3. Review against the yardstick | Thread agent (review and correction); **Karimi** (the decision) | Found that "treat a bad `__typename` as an ordinary tweet" wrote blank tweets with exit 0. Karimi decided to reject it; the thread agent wrote the correction and replaced the tests with ones using the real shape | `4181442` |
 | 4. Final directive, decision record, handoff note, self-performed handoff demo, Loom outline | Thread agent | The remaining `quest/` docs | `ef4a485` |
-| 5. Decisions, verification, review | **Karimi** | Chose A; required the rejection of agent v1's blank tweets (10-06). Had the checks re-run on his own machine (10-07). Commissioned the directive experiment and CI gate (10-08) and an independent review (10-09). Confirmed the intent scores (10-09). The Loom is recorded separately. | `8f26c44`, `dc10852` |
+| 5. Decisions, verification, review | **Karimi** | Chose A; required the rejection of agent v1's blank tweets (10-06). Had the checks re-run on his own machine (10-07). Commissioned the directive experiment and CI gate (10-08) and three independent cold reviews (10-09). Confirmed the intent scores (10-09). The Loom is recorded separately. | `8f26c44`, `dc10852` |
 
 ## Corrections and their causes
 | What went wrong | Caught by | Cause | Fix |

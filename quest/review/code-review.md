@@ -1,6 +1,6 @@
 # Code review: the agent's first fix, rejected and corrected
 
-**Reviewed:** commit `c004558` "Fail one tweet, not the batch, on a malformed embed payload" (full diff: [agent-v1.diff](agent-v1.diff)).
+**Reviewed:** commit `c004558` "Fail one tweet, not the batch, on a malformed embed payload" (full diff: [agent-v1.diff](agent-v1.diff); the agent committed it as `0d2722a` in its own worktree, and it was cherry-picked onto the branch unchanged as `c004558`).
 **Author:** a Claude sub-agent working alone in an isolated git worktree, given only [directive-v1.md](../directive-v1.md).
 **Reviewer:** the Claude thread agent working for Karimi ("I" below), checking against [yardstick.md](../yardstick.md).
 **Decision:** **Karimi decided to reject** the blank-tweet behaviour and to require a named failure instead (2026-10-06).

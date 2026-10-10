@@ -41,7 +41,7 @@ Optional Quest document. These are facts, decisions and gotchas that someone (a 
   - Candidate B's trigger ID must stay outside the batch range (it's 5000).
   - Otherwise the fixed batch hangs on the rate-gate bug that's out of scope.
 - **Tests on convenient shapes pass for the wrong reason.** A payload without `id_str` is rejected by an older check. Use the real shape.
-- **Timings are noise.** Wall time varies 1.4–2.4 s on a clean batch. Don't claim a speed-up or slow-down from one run.
+- **Timings are noise.** A clean batch took 1.4–2.4 s in the 10-06 cloud container and 1.20–1.35 s on Karimi's laptop on 10-09. Don't claim a speed-up or slow-down from one run.
 - **Estimates, not measurements:**
   - "About 8 minutes of rate budget per rerun" is arithmetic (499 ÷ 1/s).
   - "30–60 minutes for the handoff exercise" is a guess.
@@ -49,7 +49,7 @@ Optional Quest document. These are facts, decisions and gotchas that someone (a 
 ## Commands
 ```bash
 python -m pytest -q                                   # 183 passed on the Quest branch
-python quest/checks.py --src ../xs-main --candidates  # before (git worktree add ../xs-main 4585f8f; main now contains the fix)
+python quest/checks.py --src ../before --candidates  # before (git worktree add ../before 4585f8f; main now contains the fix)
 python quest/checks.py --src . --candidates           # after
 ```
 

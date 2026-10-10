@@ -88,8 +88,8 @@ Every line of [yardstick.md](yardstick.md) holds, with the evidence linked below
 
 **The commits tell the story in order:**
 1. `8d25838`: yardstick, directive v1 and check script (thread agent).
-2. `c004558`: the fix **exactly as the implementing agent wrote it**.
-3. `4181442`: **my review correction**.
+2. `c004558`: the fix **exactly as the implementing agent wrote it**. The agent committed it as `0d2722a` in its own worktree (that hash appears in [review/agent-v1.diff](review/agent-v1.diff) and `results/agent-v1.json`). It was cherry-picked onto this branch unchanged: same author, same timestamp, identical diff.
+3. `4181442`: **the review correction.** I decided the rejection; the thread agent wrote the code.
 4. The documentation commits.
 
 ## B. Reproduce it yourself

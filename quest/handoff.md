@@ -29,7 +29,7 @@ Measured locally against a **synthetic** mock: 1,000 IDs, 3 malformed (500, 700,
 
 **How to read these honestly:**
 - They show the behaviour changed. They say nothing about how often X sends a malformed payload. That has never been seen live: a 213-request live crawl from my machine on 2026-10-07 parsed everything cleanly.
-- Wall time isn't a result here. The clean batch varies 1.4–2.4 s run to run. The poisoned batch now takes longer only because it now finishes.
+- Wall time isn't a result here. The clean batch took 1.4–2.4 s in the 2026-10-06 cloud container and 1.20–1.35 s on my laptop on 2026-10-09, so the machine matters more than the code. The poisoned batch now takes longer only because it now finishes.
 - "About 8 minutes of rate budget per rerun" is arithmetic (499 requests at 1 per second), not a measurement.
 
 ## 2. How the flow works

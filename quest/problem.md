@@ -2,12 +2,20 @@
 
 Optional Quest document. [intent.md](intent.md) explains *why I chose* this problem over three others. This one is the problem on its own: who it hurts, what the evidence is, and where the edges are.
 
-## Why a Twitter scraper?
-- **It had to be my own code, and it couldn't be my day job.** The brief asks for a repository I own, with no confidential employer material. I work on core digital lending at a bank, and that code, its data and its incidents can't leave the bank. xscraper is mine: public, MIT-licensed, and built before this Quest, which the brief explicitly allows.
-- **It has the same failure modes I deal with at work, at a size that fits one flow.** Batch jobs, an upstream service I don't control, rate limits, retries and partial failure are what performance engineering on a lending platform is about. xscraper has all of them in a few thousand lines. The defect here is a classic one: one bad response from upstream takes down a whole batch.
-- **Its problems are real and already documented.** I didn't plant a bug for the exercise. Two independent reviews on 2026-09-29 had already found and reproduced these defects, so I could compare real problems with real baselines (see [intent.md](intent.md)).
-- **The dependency is honestly hostile.** X's embed endpoints are undocumented and change shape without notice. That makes "what happens when the payload isn't what we expect?" a real engineering question, not a contrived one.
-- **It's safe to run and to share.** The data is public tweets. Every measurement runs against a local mock, and the few live checks used public endpoints at 1 request per second, with no login.
+## Why this scraper exists: the problem behind the problem
+**X made its data expensive.**
+- Free API access ended in 2023.
+- Reading tweets through the official API now costs real money. Since February 2026, new developers pay per use, at a reported **$0.005 per post read**, so a million tweets costs about **$5,000**.
+- The old fixed Pro tier was **$5,000 a month**.
+- Enterprise access has been reported at around **$42,000 a month** (a 2023 figure; it's now a custom contract).
+
+For a researcher, a small team or someone like me building tools, that prices out ordinary uses: following a few accounts, archiving a thread, analysing a set of public tweets. *(Pricing as reported publicly, checked 2026-10-10. Sources disagree on some caps and dates, so treat these as orders of magnitude.)*
+
+**So I engineered around it with what's already public.** Every website that embeds a tweet gets it from X's public **syndication (embed) endpoints**. No login, no API key, and X applies its own rate limits. xscraper reads tweets from those same endpoints, slowly (1 request per second by default) and only public data. Whether a particular use fits X's terms is the user's responsibility, as the README's Legal section says. The tool doesn't get around logins, paywalls or rate limits.
+
+**That choice creates the engineering risk this Quest is about.** The embed endpoints are **undocumented**, and X changes their payload shape without notice. A paid API comes with a contract. A scraper on public endpoints has none, so **the scraper's reliability depends entirely on how it handles responses it doesn't expect.** When it handles them badly, one odd payload takes down a whole batch, which is the defect below.
+
+**Why I used it for the Quest, and not my day job.** The brief wants code I own and no confidential employer material. My work is performance engineering on core digital lending at a bank, and that can't leave the bank. xscraper is mine (public, MIT), it predates the Quest, and it has the same failure modes I work on every day: batch jobs, an upstream service I don't control, rate limits, retries and partial failure. Its defects were found by two independent reviews on 2026-09-29, not planted for this exercise.
 
 ## The problem in one sentence
 When X's embed endpoint returns a tweet payload the parser doesn't expect, `xscraper tweet` doesn't fail that one tweet. It **crashes the whole batch**, loses every tweet after it, doesn't say which ID caused it, and **dies at the same place on every rerun**.
@@ -44,3 +52,11 @@ When X's embed endpoint returns a tweet payload the parser doesn't expect, `xscr
 - Clean batches are unchanged.
 
 All five are checked mechanically by [checks.py](checks.py) and enforced in CI by `tests/test_yardstick.py`. The results are in [directive.md](directive.md) §C.
+
+## Sources for the pricing (checked 2026-10-10)
+- [X API Pricing 2026: Pay-Per-Use Rates, Limits, Costs (Outstand)](https://www.outstand.so/blog/x-api-pricing)
+- [X (Twitter) API Pricing in 2026: All Tiers (Postproxy)](https://postproxy.dev/blog/x-api-pricing-2026/)
+- [X (Twitter) API Pricing 2026: Rates, Tiers & Real Costs (Sorsa)](https://api.sorsa.io/blog/twitter-api-pricing-2026)
+- [X (Twitter) API in 2026: Credit Pricing + 3 Cheaper Routes (SocialCrawl)](https://www.socialcrawl.dev/blog/x-twitter-api-2026)
+
+These are third-party summaries, not X's own pricing page, and they disagree on some details. Confirm on X's developer site before relying on a number.

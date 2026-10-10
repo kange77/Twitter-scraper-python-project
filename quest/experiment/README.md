@@ -4,8 +4,9 @@
 
 ## Method
 - **Two arms, 3 fresh agents each** (Claude sub-agents, same model, same wrapper prompt).
-  - Each agent got only its directive text: [directive-v1.txt](directive-v1.txt) or [directive-final.txt](directive-final.txt).
-  - The final text is `directive.md` sections 1–7, with links to files the agent can't see replaced by plain text.
+  - Each agent got only its directive text: [directive-v1.txt](directive-v1.txt) or [directive-final.txt](directive-final.txt). These are the **exact files the agents read**, kept as evidence:
+    - `directive-v1.txt` is [../directive-v1.md](../directive-v1.md) from "## Context" onward, word for word (the header was left off).
+    - `directive-final.txt` is `directive.md` sections 1–7 **as they stood on 2026-10-08**, with links to files the agent couldn't see replaced by plain text. Today's `directive.md` has been rewritten since, so this snapshot is the version that was actually tested.
 - **Isolation:**
   - Each agent had its own git worktree at `main` @4585f8f, with no `quest/` folder, no reference fix and no review.
   - They were told not to read other worktrees, branches or the web.
@@ -52,3 +53,7 @@
 - **Small n:** 3 runs per arm, plus the original v1 run, all from one model family, on one machine.
 - **Sufficiency, not cleverness:** the final directive states the required behaviour outright (requirement 1). The experiment shows the revised instructions are *sufficient*; it doesn't show agents would find the right policy alone.
 - **Same author:** Karimi's side wrote the scorer and the hidden tests. They're published here so they can be checked.
+- **The agents' code isn't in the repo.** Each agent's commit lived in a local worktree that was never pushed, and those worktrees have since been deleted:
+  - **What remains:** [scores.txt](scores.txt) (the scorer's raw output) and [agent-reports.md](agent-reports.md) (what each agent said it did).
+  - **Can't be rerun:** the six agent scores.
+  - **Can be rerun:** the calibration. `main` @4585f8f, the rejected `c004558` and the accepted `4181442` are all public, and [score.py](score.py) scores them, though its paths reflect the directory layout it was run in.

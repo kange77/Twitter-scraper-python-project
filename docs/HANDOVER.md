@@ -27,6 +27,49 @@ Read sections 1–3 on day one. Keep sections 6–7 open the first time you run 
 1. Clone, install, run the tests (§6.1). Expect `302 passed`.
 2. Run `xscraper tweet 20` from your machine. It should print @jack's "just setting up my twttr". If it doesn't, X has changed something; go to §7.6.
 3. Read §5 (the rules I don't break) and §9 (what's still broken) before changing anything.
+4. Look at §1a. That's what a healthy run looks like.
+
+---
+
+## 1a. See it run
+
+I ran all of this on my own machine on 2026-10-10, against live X, at 1 request per second. That was about 80 requests in total. The screenshots are the real terminal output; the only edit is my hostname and home folder. If yours looks different, something has changed: either X, or the code.
+
+**The tests come first, every time.** 302 pass in about 24 s. If this isn't green, don't trust anything else.
+
+![pytest: 302 passed](images/handover/01-tests.png)
+
+**Fetching tweets by ID** is the most reliable thing the tool does, and it needs no login. Notice `↻ -` and `❝ -`: the embed endpoint never sends retweet or quote counts, so they're empty, not zero (§9).
+
+![xscraper tweet with three live tweets](images/handover/02-tweet.png)
+
+**A batch to a file.** ID `1` doesn't exist. It's reported as *not available*, the other four are written, and the exit code is 0, because a missing tweet isn't a failure. A payload we *can't read* would be a named `failed:` line with exit 1; that path is what the Quest fix is about.
+
+![xscraper tweet batch to JSON Lines](images/handover/03-batch.png)
+
+**A real crawl job.** 27 seed tweets, following replies, quotes and retweets one hop out, took 27.6 s at `--rate 1`. Everything is in `job.db`, and `job status` reads it back.
+
+![xscraper crawl and job status](images/handover/04-crawl.png)
+
+**Stopping and resuming,** which is the part I care about most. SIGTERM after 8 s left 10 done, 17 pending and **0 leased**, with exit **143**. Running the same command again finished the other 17. Nothing was fetched twice and nothing was stranded. (`--preserve-status` makes `timeout` pass the crawl's own exit code through.)
+
+![crawl stopped with SIGTERM and resumed](images/handover/05-sigterm.png)
+
+**Analysis is offline and fast:** 28 tweets in 0.6 ms on the WASM core.
+
+![xscraper analyze](images/handover/06-analyze.png)
+
+**Profiles are the unreliable part.** This time X sent @NASA's widget empty. The tool says so plainly and exits 1, instead of pretending NASA has no tweets. Run it again later, use your own cookies, or seed with tweet IDs (§7.5).
+
+![xscraper user NASA, empty widget](images/handover/07-user.png)
+
+**One watch cycle.** The first poll records both tweets as `new`. `--status` shows the schedule and the outbox. "Undelivered to webhook: 2" just means the events are waiting in the outbox; no webhook is configured here.
+
+![xscraper watch once and status](images/handover/08-watch.png)
+
+**Health and metrics while a crawl runs:** `/healthz` is `ok`, and the counters move. Be aware that `xscraper_frontier_items` only refreshes on the 5-second heartbeat, so early in a run it lags the counters (12 pending, while 5 are already done). Alert on the counters, not that gauge.
+
+![healthz and Prometheus metrics during a crawl](images/handover/09-metrics.png)
 
 ---
 

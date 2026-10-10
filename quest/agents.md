@@ -56,7 +56,7 @@ The lesson above was tested with 3 fresh agents per directive version, scored me
 See [experiment/README.md](experiment/README.md). The yardstick now runs on every CI build as `tests/test_yardstick.py`, so a v1-style fix can't pass CI.
 
 ## Briefing a new agent on this flow
-Give it [handoff.md](handoff.md) (the flow diagram, rules and checklist) and [memory.md](memory.md) (facts and gotchas). Also give it a task with:
+Give it [handoff.md](handoff.md) (the flow diagram, rules and checklist) and [`CLAUDE.md`](../CLAUDE.md) (the project rules). Also give it a task with:
 - the file boundaries;
 - an acceptance criterion phrased as *observable output* (for example "the bad ID appears on stderr as `failed: <id>: …`, exit 1, nothing blank written");
 - the requirement to run `checks.py` and the full suite before reporting.

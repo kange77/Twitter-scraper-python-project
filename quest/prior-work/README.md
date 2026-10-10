@@ -1,14 +1,10 @@
 # Prior work (pre-existing, not part of the Quest change)
 
-Everything in this folder **predates the Quest**. The two reports were added **unchanged** with the Quest documents on 2026-10-06. The scripts, the mock server and the maturity ladder were copied **unchanged** from Karimi's local project folder on 2026-10-09, so the evidence that `intent.md` relies on can be checked.
+These two reports **predate the Quest** and are kept **unchanged**. They're the source of the four candidate problems in [intent.md](../intent.md), which shows the defects were found by independent reviews, not planted for this exercise.
 
 | File | What it is | Written |
 |---|---|---|
-| [xscraper-review.md](xscraper-review.md) | Senior review and independent QA (source of candidate A and finding 1, S1–S12) | 2026-09-29 |
-| [principal-qa.md](principal-qa.md) | Principal QA review (source of candidates B and C; P1–P10) | 2026-09-29 |
-| [scripts/qa/](scripts/qa/) | Reproduction scripts for the senior review (`crashone.py`, `fuzz.py`, `watchflap.py`, benchmarks) | 2026-09-29 |
-| [scripts/principal-qa/](scripts/principal-qa/) | Reproduction scripts for the principal QA (`hostile_mock.py`, `mutants.py`, `store_clobber.py`, …) | 2026-09-29 |
-| [scripts/mock-x/](scripts/mock-x/) | The mock X server the reviews ran against. The senior review cites it as `/mnt/project-files/mock-x/server.py` | 2026-09-27 |
-| [maturity-ladder.md](maturity-ladder.md) | The scraper maturity ladder, context for the reviews' "tier" grading | 2026-09-27 |
+| [xscraper-review.md](xscraper-review.md) | Senior review and independent QA (finding 1 is this Quest's defect) | 2026-09-29 |
+| [principal-qa.md](principal-qa.md) | Principal QA review (the source of candidates B and C) | 2026-09-29 |
 
-**Running them:** they're kept as written. Several hard-code paths from the environment they were written in, such as `/tmp/claude-0/venv`, `/home/user/Twitter-scraper-python-project` and `/mnt/project-files`, and many target the crawl/watch code (`claude/project-thread-jx0q4f`), not this Quest's flow. To rerun one, point those paths at your checkout. The Quest's own, maintained check is [`quest/checks.py`](../checks.py).
+**Their reproduction scripts aren't included.** Most of them target the crawl, watch and multi-process code, which isn't part of this flow or this branch. The Quest's defect is reproduced by the maintained check [`quest/checks.py`](../checks.py), whose before and after results are in [`results/`](../results/). The original scripts are in this repository's history (commit `b6904d2`, `quest/prior-work/scripts/`).

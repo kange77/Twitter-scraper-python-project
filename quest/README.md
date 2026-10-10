@@ -26,7 +26,7 @@ python quest/checks.py --src .                        # after: 0 lost, 3 bad IDs
 | [handoff.md](handoff.md) | Metrics, flow map, rules, review checklist, handoff exercise |
 | [results/](results/) | Before / agent-v1 / after JSON, and the 5x repeatability summary |
 | [experiment/](experiment/) | Directive v1 vs final, 3 fresh agents each, scored mechanically |
-| [problem.md](problem.md), [agents.md](agents.md), [claude.md](claude.md), [memory.md](memory.md) | Optional: the problem and its evidence; agent roles and rules; Claude setup and verification workflow; lasting facts and gotchas |
+| [problem.md](problem.md), [agents.md](agents.md), [claude.md](claude.md) | Optional: the problem and its evidence; agent roles and rules; Claude setup and verification workflow |
 | [`../CLAUDE.md`](../CLAUDE.md) | The project rules Claude Code loads in every session |
 | [prior-work/](prior-work/) | Pre-existing 2026-09-29 reviews and their scripts (unchanged) |
 | [`tests/test_yardstick.py`](../tests/test_yardstick.py) | The yardstick as a CI gate |

@@ -83,8 +83,7 @@ Every line of [yardstick.md](yardstick.md) holds, with the evidence linked below
 | **Directive experiment** (v1 vs final, 3 fresh agents each) | [experiment/README.md](experiment/README.md) |
 | **The yardstick as a CI gate** | [tests/test_yardstick.py](https://github.com/kange77/Twitter-scraper-python-project/blob/quest/tests/test_yardstick.py) |
 | Prior work (the 2026-09-29 reviews and their scripts, unchanged) | [prior-work/](prior-work/README.md) |
-| Loom outline | [loom-script.md](loom-script.md) |
-| Optional documents | [problem.md](problem.md) (users, evidence, scope) · [agents.md](agents.md) (agent roles and rules) · [claude.md](claude.md) (Claude setup, tools, verification workflow) · [memory.md](memory.md) · [`CLAUDE.md`](../CLAUDE.md) (the project rules Claude Code loads) |
+| Optional documents | [problem.md](problem.md) (users, evidence, scope) · [agents.md](agents.md) (agent roles and rules) · [claude.md](claude.md) (Claude setup, tools, verification workflow) · [`CLAUDE.md`](../CLAUDE.md) (the project rules Claude Code loads) |
 
 **The commits tell the story in order:**
 1. `8d25838`: yardstick, directive v1 and check script (thread agent).

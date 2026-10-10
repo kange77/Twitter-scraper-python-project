@@ -1,6 +1,14 @@
-# Handoff demo (self-performed; limitation stated)
+# Handoff demo
 
-**Who performed it:** the same Claude thread agent that wrote `handoff.md`, working on a throwaway branch (`handoff-demo`, deleted afterwards) from the handoff note and the code. No other engineer took part, and no real feedback was collected. Because the author already knew the code, this mainly tests whether the *note* is complete, not whether a newcomer can follow it.
+This file records every attempt at the exercise in [handoff.md](../handoff.md) §5, and what each one changed in the note.
+
+| Attempt | Who | Result |
+|---|---|---|
+| 1 | Claude (the agent that wrote the note) | Failed an existing test, which exposed a gap in the note |
+| 2 | Claude, after fixing the note | Passed (181 tests) |
+| 3 | **A person, cold** | **Not done yet.** Recorded below when it happens |
+
+**Why attempts 1 and 2 are weak evidence:** the agent already knew the code, so they mainly test whether the *note* is complete, not whether a newcomer can follow it. They ran on a throwaway branch (`handoff-demo`, deleted afterwards). In attempts 1 and 2 below, "I" means Claude.
 
 ## Attempt 1: original exercise, "`user` not an object → fail the ID" (20:22:20–20:22:25 UTC)
 - I followed the note: a check in `parse_tweet_result` and a parametrized test.
@@ -21,5 +29,5 @@
 ## Timing caveat
 The timestamps are the agent's tool runs, a few seconds each. They aren't a fair estimate of how long a person would take. A realistic guess for an engineer new to the repo is 30–60 minutes including setup. That's an **estimate, not observed**.
 
-## Still to do (for Karimi)
-Have one other engineer do the exercise cold from `handoff.md`, and record the time taken, where they got stuck and what they changed. Replace this section with what you observe. Don't add feedback that didn't happen.
+## Attempt 3: a person, cold
+**Status: not done yet.** When it happens, this section will record who did it, how long it took (start, setup done, change found, finished), where they hesitated or got stuck, what in `handoff.md` was missing or wrong and what I changed in response, and their final `pytest` line and diff. Nothing will be written here that didn't happen.

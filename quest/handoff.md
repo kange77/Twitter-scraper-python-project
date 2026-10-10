@@ -1,66 +1,119 @@
-# Quality metrics and handoff note: `xscraper tweet` batch flow
+# handoff.md: the `xscraper tweet` batch flow
 
-## Metrics (measured locally, synthetic mock, one machine)
-From `python quest/checks.py --src <checkout>` with 1,000 IDs, 3 of them malformed (IDs 500, 700, 900), `--rate 5000 --workers 16 --retries 0`, on Python 3.13 in a 4-core cloud container. Raw output: [before.json](results/before.json), [after.json](results/after.json), [agent-v1.json](results/agent-v1.json).
+This note is for the next engineer who changes how `xscraper tweet` handles a batch of IDs. With it you should be able to understand the flow, change it safely, and prove you didn't break it, without needing me. It covers the Quest change only. For the whole system, see [docs/HANDOVER.md](https://github.com/kange77/Twitter-scraper-python-project/blob/docs/handover/docs/HANDOVER.md).
 
-| Metric | main @4585f8f | Agent v1 (rejected) | This branch |
+## The short version
+- **What this flow promises:** a response we can't read costs **that one ID**. The ID is named on stderr, every other tweet is still written, and the exit code is 1.
+- **The one place it's enforced:** `scraper.tweet_from_body`, the parse entry point both engines share. Payload checks live in `parse.py`. The batch loops don't change.
+- **How you know you didn't break it:**
+  - `python -m pytest -q` (183 tests), which includes the yardstick gate `tests/test_yardstick.py`;
+  - `python quest/checks.py --src .`, which runs the real CLI on 1,000 IDs, 3 of them poisoned.
+- **Time to get productive:** about 30–60 minutes, including setup. *That's my estimate; nobody has timed it yet.*
+
+---
+
+## 1. The numbers this flow has to keep
+Measured locally against a **synthetic** mock: 1,000 IDs, 3 malformed (500, 700, 900), `--rate 5000 --workers 16 --retries 0`. One run per version on 2026-10-06, then 5 per version on 2026-10-09, with identical outcomes. Raw data: [before](results/before.json) · [agent v1](results/agent-v1.json) · [after](results/after.json) · [5x repeat](results/repeat-5x-2026-10-09.json).
+
+| Metric | Before (`4585f8f`) | Agent v1 (rejected) | Now |
 |---|---|---|---|
 | Good tweets lost (of 997) | **498** | 0 | **0** |
 | Bad IDs named on stderr | 0 (traceback) | 0 | **3** |
-| Malformed payloads written as blank tweets | 0 | **3** | 0 |
-| Exit code | 1 (uncaught `TypeError`) | **0** | 1 (reported failures) |
-| Requests sent for the batch | 514–525 across runs | 1,000 | 1,000 |
-| Rerun gives the same result | yes (dies at the same ID) | yes | yes |
-| Same results, async and sync engines | yes | yes | yes |
+| Malformed payloads written as blank tweets | 0 | **3** | **0** |
+| Exit code | 1 (uncaught `TypeError`) | **0** | **1** (reported failures) |
+| Requests for the batch | 514–525 (dies partway) | 1,000 | 1,000 |
+| Rerun | dies at the same ID | same | completes |
+| Async vs sync engine | same | same | same |
 | Clean 400-ID batch: written / exit / requests | 400 / 0 / 400 | 400 / 0 / 400 | 400 / 0 / 400 |
-| Test suite | 171 passed | 178 passed | 178 passed |
-| New tests that fail on `main` / on agent v1 | n/a | n/a | 6 / 5 |
+| Tests | 171 passed | 178 passed | 183 passed (178 + 5 gate tests) |
 
-**Reading these honestly**
-- These are counts from local runs against a synthetic mock: one run per version on 2026-10-06, then five per version on 2026-10-09 with identical outcomes (only `main`'s request count varies). They show the behaviour changed. They don't say how often X sends a malformed payload, which hasn't been measured; X hosts are blocked here.
-- Wall time isn't a result. The clean batch took 1.4–2.4 s in both versions, and that spread is run-to-run noise on this container. The poisoned batch takes longer after the fix only because the run now finishes (3.2 s vs 1.9 s).
-- "About 8 minutes of rate budget saved per rerun at `--rate 1`" (intent.md) is arithmetic, not a measurement.
-- The candidate baselines (B: 20 s timeout with 1 request, C: counts `40, 2` → `null, null`, D: human format on stdout) are unchanged after the fix, as intended. They're out of scope.
+**How to read these honestly:**
+- They show the behaviour changed. They say nothing about how often X sends a malformed payload. That has never been seen live: a 213-request live crawl from my machine on 2026-10-07 parsed everything cleanly.
+- Wall time isn't a result here. The clean batch varies 1.4–2.4 s run to run. The poisoned batch now takes longer only because it now finishes.
+- "About 8 minutes of rate budget per rerun" is arithmetic (499 requests at 1 per second), not a measurement.
 
-## How the flow works (enough to change it without me)
+## 2. How the flow works
 ```
 cli.cmd_tweet ─┬─ async: aio.AsyncScraper.iter_tweets → _tweet_or_exc ─┐
                └─ sync:  scraper.Scraper.iter_tweets → fetch ───────────┤
                                                                         ▼
-            client.get(TWEET_ENDPOINT)   → HttpError / NotFound (None)
-            scraper.tweet_from_body      → JSON decode → parse_tweet_result
-                                           ★ the boundary: shape errors → ParseError("tweet <id>: …")
-            per-item: HttpError | ParseError → "failed: <id>: <reason>", exit 1
-            anything else                → propagates, ends the run (by design)
+   client.get(TWEET_ENDPOINT)     → HttpError (retried, then per-ID failure) / NotFound → None
+   scraper.tweet_from_body(id, body)
+       empty body / not JSON     → ParseError
+       parse.parse_tweet_result  → None for tombstone / unavailable types
+                                 → ParseError for a non-string __typename   (identity field: fail the ID)
+                                 → Tweet otherwise                          (attribute fields degrade)
+       ★ shape errors raised while parsing (TypeError, ValueError, LookupError,
+         AttributeError, ArithmeticError) → ParseError("tweet <id>: …"), original in __cause__
+   batch loop: HttpError | ParseError → "failed: <id>: <reason>", keep going, exit 1 at the end
+               anything else          → propagates and ends the run (on purpose)
 ```
-**Rules for changing it:**
-1. Want a new payload check? Raise `ParseError` from `xscraper/parse.py`. Don't add `except` clauses to the batch loops.
-2. Never widen `tweet_from_body`'s `except` beyond data-shape errors, and never catch `Exception` in a loop. `tests/test_scraper.py::test_tweet_from_body_leaves_other_errors_alone` guards this.
-3. **Know the two-level payload policy.** *Attribute* fields (`user`, `entities`, counts, media, dates, `text`…) **degrade**: a wrong type becomes `None` or empty and the tweet is kept. `tests/test_parse.py::test_unexpected_field_types_do_not_crash` enforces this, and it predates the Quest. *Identity* fields (`id_str`, `__typename`, `tombstone`) decide whether the record is a live tweet at all, so a bad value **fails the ID** with `ParseError`. Don't store a guess for those (see `review/code-review.md`).
-4. Every change needs a test that fails without it, and `quest/checks.py` before and after.
 
-## Review checklist (for any change to this flow)
-- [ ] A bad item fails only itself: `checks.py` shows `ids_lost == 0`
-- [ ] Every failure is named: `failures_reported == poison_ids`, no traceback, exit 1
-- [ ] Nothing malformed is written as a real tweet (look at the output, not just the count)
-- [ ] Clean batch unchanged: same written, exit and requests
+**Where to look:**
+| Need to… | File, function |
+|---|---|
+| add or change a payload check | `xscraper/parse.py`: `parse_tweet_result` (by-ID only) or `parse_tweet` (**also used by the timeline**) |
+| change what counts as a per-ID failure | `xscraper/scraper.py`: `tweet_from_body`. Think twice (rule 2) |
+| see how failures are printed and counted | `xscraper/cli.py`: `cmd_tweet` |
+| prove the batch still behaves | `quest/checks.py`, `tests/test_yardstick.py` |
+
+## 3. Rules for changing it
+1. **A new payload check raises `ParseError` from `parse.py`.** Don't add `except` clauses to the batch loops.
+2. **Never widen `tweet_from_body`'s `except` beyond data-shape errors, and never catch `Exception` in a loop.** Bugs in HTTP, scheduling or output code must stay loud. `test_tweet_from_body_leaves_other_errors_alone` guards this.
+3. **Know the two-level payload policy.** It's the thing most likely to trip you up.
+   - **Attribute fields** (`user`, `entities`, counts, media, dates, `text`) **degrade**: a wrong type becomes `None` or empty, and the tweet is kept. `test_unexpected_field_types_do_not_crash` enforces this, and it predates my change.
+   - **Identity fields** (`id_str`, `__typename`, `tombstone`) decide whether the record is a live tweet at all, so a bad value **fails the ID**.
+   - Never store a guess.
+4. **Changes that only make sense for tweets fetched by ID go in `parse_tweet_result`, not `parse_tweet`.** The timeline also uses `parse_tweet`.
+5. **Every change ships with a test that fails without it, using the real bad shape.** A payload missing `id_str` is rejected by an older check, so a test built on it passes for the wrong reason. The coding agent did exactly that once.
+6. **Run `checks.py` before and after, and look at what was written, not just the counts.** That's how the blank-tweet fix was caught: it passed every test.
+
+## 4. Review checklist (for any change to this flow)
+- [ ] `python -m pytest -q` is green, including `tests/test_yardstick.py`
+- [ ] `checks.py`: `ids_lost == 0`, and `failures_reported == poison_ids`, with no traceback and exit 1
+- [ ] Nothing malformed is written as a real tweet. **Open the output file and check.**
+- [ ] The clean batch is unchanged: same written, exit and requests
 - [ ] No `except Exception` or bare `except` added; HTTP and output bugs still raise
-- [ ] New tests fail on the base branch, and use the real bad shape, not a convenient one
+- [ ] New tests fail on the commit you started from, and use the real bad shape
 - [ ] Both engines covered (`--http async` and `--http sync`)
-- [ ] Diff stays in the flow (`git diff --stat` against the commit you started from)
+- [ ] The diff stays in this flow: `git diff --stat <base> -- xscraper` shows only `parse.py` and/or `scraper.py`
 
-## Handoff exercise
-**Task:** an embed payload whose `id_str` isn't numeric (for example `"abc"`) is currently stored as a tweet with that ID and a broken URL. Make it fail that ID instead, in the `tweet` flow only, following the rules and checklist above.
+## 5. Handoff exercise (about 30–60 minutes)
+**The bug:** an embed payload whose `id_str` isn't numeric (for example `"abc"`) is stored as a tweet with that ID and a broken URL. I checked this on 2026-10-10: `tweet_from_body` returns a `Tweet` with id `'abc'` and URL `https://x.com/nasa/status/abc`.
 
-**Expected solution shape:** a check in `parse_tweet_result` (not in `parse_tweet`, which the timeline also uses), one parametrized test, the full suite green, and no change to the batch loops. Roughly 5 lines of code plus a test.
+**Your task:** make that payload fail the ID instead, in the `tweet` flow only, following the rules and checklist above.
 
 **Setup:**
 ```bash
 git clone https://github.com/kange77/Twitter-scraper-python-project && cd Twitter-scraper-python-project
-git checkout quest
-python -m venv .venv && . .venv/bin/activate && pip install -e ".[dev]"
-python -m pytest -q                       # expect: 183 passed (includes the yardstick gate)
-python quest/checks.py --src .            # expect: poison_* ids_lost 0, failures_reported 3
+git switch quest
+python3 -m venv .venv && . .venv/bin/activate && pip install -e ".[dev]"
+python -m pytest -q                      # expect: 183 passed
+python quest/checks.py --src .           # expect poison_*: ids_lost 0, failures_reported 3
 ```
 
-**Observed result: demonstrated by the AI agent itself, not by another engineer.** No second engineer was available, so the thread agent that wrote this note performed the exercise from this note alone, on a throwaway branch. That's a weak test of the handoff, because the author already knows the code. See [handoff-demo.md](review/handoff-demo.md) for what happened. Karimi, or another engineer, doing the exercise cold and recording where they got stuck is the real test, and it hasn't happened yet.
+**Rules of the exercise:**
+- Use this note and the code.
+- **Don't open** `review/handoff-demo*.md` or `review/handoff-demo-attempt2.diff`; they contain the answer.
+- Time yourself, and write down every place you hesitated. That's the feedback this exercise exists to collect.
+
+**You're done when:**
+- the full suite is green;
+- your new test fails without your change;
+- `checks.py` is unchanged;
+- the batch loops are untouched.
+
+The reference solution is small: a check in `parse_tweet_result`, plus one parametrized test.
+
+**Then tell me:**
+- how long it took;
+- where you got stuck;
+- what in this note was missing, wrong or confusing.
+
+I'll fix the note and record what you found in [review/handoff-demo.md](review/handoff-demo.md).
+
+## 6. How this note has been tested so far
+- **So far, only by the AI that wrote it** ([review/handoff-demo.md](review/handoff-demo.md)).
+- **Its first attempt failed an existing test.** The exercise I'd originally set contradicted the payload policy, which the note didn't mention yet. That's why rule 3 exists.
+- **Its second attempt passed.**
+- **Not yet done:** a person doing it cold. Until that happens, treat the 30–60 minute estimate as a guess.

@@ -17,7 +17,7 @@
 **Option 3, with option 1's guard made strict.** A non-string `__typename` raises `ParseError`; it isn't treated as a tweet. `tweet_from_body` turns `TypeError`, `ValueError`, `LookupError`, `AttributeError` and `ArithmeticError` from parsing into a `ParseError` that names the tweet ID and chains the original exception.
 
 ## How this fits the existing parser policy
-The parser already had a deliberate rule, enforced by `test_unexpected_field_types_do_not_crash`: a wrong type in an *attribute* field degrades to `None` or empty and the tweet is kept. `__typename` is different. It's an *identity* field that decides whether the record is a live tweet or a tombstone, so a bad value fails the ID instead of degrading. The handoff demo made this distinction explicit (`review/handoff-demo.md`).
+The parser already had a deliberate rule, enforced by `test_unexpected_field_types_do_not_crash`: a wrong type in an *attribute* field degrades to `None` or empty and the tweet is kept. `__typename` is different. It's an *identity* field that decides whether the record is a live tweet or a tombstone, so a bad value fails the ID instead of degrading. The handoff demonstration made this distinction explicit (`handoff.md` §6).
 
 ## Trade-offs accepted
 - **Parser bugs look like data errors.** A programming bug inside the parser is reported per tweet instead of crashing. That's acceptable because the parser's whole job is reading untrusted data, the original exception is kept in `__cause__`, and a systematic bug shows up as every ID failing with the same message.

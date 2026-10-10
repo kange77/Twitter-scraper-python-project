@@ -59,7 +59,7 @@ Every line of [yardstick.md](yardstick.md) holds, with the evidence linked below
 - **Requirement 1 was reversed.** v1 said a non-string `__typename` should be "treated as an ordinary tweet type". The agent did exactly that, and malformed payloads became blank tweets with exit 0. I rejected it ([review/code-review.md](review/code-review.md)). The lesson I took: write what the user must **receive**, not just what must stop crashing.
 - **Tests must use the real shape.** v1 didn't say so, and the agent's CLI tests dropped `id_str` so they would pass.
 - **More errors converted:** `ValueError` and `ArithmeticError`, the ID prefix on existing `ParseError`s, and the "other errors propagate" test.
-- **The payload policy went into the context** after the handoff demo hit it ([review/handoff-demo.md](review/handoff-demo.md)).
+- **The payload policy went into the context** after the handoff demonstration hit it ([handoff.md](handoff.md) §6).
 - **After the 2026-10-08 experiment:** all three agents given this directive flagged that "fails on `main`" contradicts the required guard test. Requirement 5 now exempts labelled guards, and the yardstick runs in CI as `tests/test_yardstick.py`.
 
 ---
@@ -78,8 +78,7 @@ Every line of [yardstick.md](yardstick.md) holds, with the evidence linked below
 | Before/after check script and raw results | [checks.py](checks.py) · [before](results/before.json) · [agent v1](results/agent-v1.json) · [after](results/after.json) · [5x repeat](results/repeat-5x-2026-10-09.json) |
 | **Code review: the rejected AI output** | [review/code-review.md](review/code-review.md), with the agent's raw diff in [review/agent-v1.diff](review/agent-v1.diff) |
 | Decision record (options and trade-offs) | [decision-record.md](decision-record.md) |
-| Quality metrics, review checklist and handoff note | [handoff.md](handoff.md) |
-| Handoff demonstration | [review/handoff-demo.md](review/handoff-demo.md) |
+| Quality metrics, review checklist, handoff note and handoff demonstration | [handoff.md](handoff.md) |
 | **Directive experiment** (v1 vs final, 3 fresh agents each) | [experiment/README.md](experiment/README.md) |
 | **The yardstick as a CI gate** | [tests/test_yardstick.py](https://github.com/kange77/Twitter-scraper-python-project/blob/quest/tests/test_yardstick.py) |
 | Prior work (the 2026-09-29 reviews and their scripts, unchanged) | [prior-work/](prior-work/README.md) |
@@ -138,7 +137,7 @@ python quest/checks.py --src . --candidates           # after:  0 lost, 3 named 
 
 ## D. Handoff
 - **For whoever changes this next:** [handoff.md](handoff.md) has the flow map, the rules, the review checklist and an exercise.
-- **How it's been tested:** so far, only by the AI that wrote it ([review/handoff-demo.md](review/handoff-demo.md)). The first attempt failed an existing test. That exposed a policy the note didn't mention, so the note was fixed, and the second attempt passed.
+- **How it's been tested:** so far, only by the AI that wrote it ([handoff.md](handoff.md) §6). The first attempt failed an existing test. That exposed a policy the note didn't mention, so the note was fixed, and the second attempt passed.
 - **Not done yet:** a person doing it cold. I'll update that file with what actually happens.
 
 ## E. How I used AI, and what I corrected

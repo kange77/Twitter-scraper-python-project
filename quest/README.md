@@ -21,7 +21,7 @@ python quest/checks.py --src .                        # after: 0 lost, 3 bad IDs
 | Folder or file | What |
 |---|---|
 | [yardstick.md](yardstick.md), [directive-v1.md](directive-v1.md) | Quality yardstick; the first directive given to the agent |
-| [review/](review/) | Code review of the rejected agent output, and the handoff demo |
+| [review/](review/) | The code review of the rejected agent output, and its raw diff |
 | [decision-record.md](decision-record.md) | Options, decision, trade-offs |
 | [handoff.md](handoff.md) | Metrics, flow map, rules, review checklist, handoff exercise |
 | [results/](results/) | Before / agent-v1 / after JSON, and the 5x repeatability summary |

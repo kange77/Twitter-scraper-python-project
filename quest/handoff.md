@@ -94,7 +94,6 @@ python quest/checks.py --src .           # expect poison_*: ids_lost 0, failures
 
 **Rules of the exercise:**
 - Use this note and the code.
-- **Don't open** `review/handoff-demo*.md` or `review/handoff-demo-attempt2.diff`; they contain the answer.
 - Time yourself, and write down every place you hesitated. That's the feedback this exercise exists to collect.
 
 **You're done when:**
@@ -110,10 +109,14 @@ The reference solution is small: a check in `parse_tweet_result`, plus one param
 - where you got stuck;
 - what in this note was missing, wrong or confusing.
 
-I'll fix the note and record what you found in [review/handoff-demo.md](review/handoff-demo.md).
+I'll fix the note and record what you found in §6 below.
 
 ## 6. How this note has been tested so far
-- **So far, only by the AI that wrote it** ([review/handoff-demo.md](review/handoff-demo.md)).
-- **Its first attempt failed an existing test.** The exercise I'd originally set contradicted the payload policy, which the note didn't mention yet. That's why rule 3 exists.
-- **Its second attempt passed.**
-- **Not yet done:** a person doing it cold. Until that happens, treat the 30–60 minute estimate as a guess.
+| Attempt | Who | What happened |
+|---|---|---|
+| 1 | Claude, the agent that wrote the note | The exercise was then "a `user` field that isn't an object should fail the ID". Following the note, it added the check and a test. **1 failed, 180 passed:** the existing `test_unexpected_field_types_do_not_crash[user-value2]` broke, because the project deliberately *degrades* attribute fields. The exercise contradicted a tested policy the note never mentioned. |
+| — | Note fixed | Rule 3 (the two-level payload policy) was added, and the exercise was replaced with today's non-numeric `id_str` task, which is consistent with the policy. |
+| 2 | Claude, from the revised note | A 3-line check in `parse_tweet_result`, plus a 3-case parametrized test. **181 passed**, and `tweet_from_body` raised `ParseError: … non-numeric id: 'abc'`. Not merged: it's the reference answer. |
+| 3 | **A person, cold** | **Not done yet.** |
+
+**Why attempts 1 and 2 are weak evidence:** the agent already knew the code, so they test whether the *note* is complete, not whether a newcomer can follow it. Each took seconds of tool time, which says nothing about how long a person needs; 30–60 minutes is my estimate, not observed. The good news from attempt 1 is that the existing suite caught the conflict straight away.

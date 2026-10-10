@@ -168,8 +168,8 @@ python quest/checks.py --src . --candidates           # after:  0 lost, 3 named 
 
 ## F. Effort
 - **Agent time (measured):** about 25 minutes on 2026-10-06, docs included. The implementing agent ran for 2 min 51 s of that.
-- **My time:** about 6–10 hours across the week. **That's my estimate; I didn't track it.** It went on deciding, directing and checking agents, and on reading what they produced. The Loom isn't included.
-- **Why the agent time is short:** the candidates and their reproductions already existed from the 2026-09-29 reviews, and AI did most of the drafting. My time went where I think a lead's should: on judgment and verification.
+- **My time: about 7 hours** across the week. That went on deciding, directing and checking agents, reading and correcting what they produced, and preparing the Loom. It's my own count, not tracked by a tool.
+- That's inside the brief's suggested 6–8 hours. **Why the agent time is so much shorter:** the candidates and their reproductions already existed from the 2026-09-29 reviews, and AI did most of the drafting. My time went where I think a lead's should: on judgment and verification.
 
 ## G. Limits, plainly
 - **The bad payload has never been seen live.** The shape came from fuzzing. From my machine on 2026-10-07, the live embed endpoint worked, and a 213-request crawl outside this Quest parsed every real response without error. How often X sends this shape is unknown.

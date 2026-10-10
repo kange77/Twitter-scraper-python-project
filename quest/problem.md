@@ -2,6 +2,13 @@
 
 Optional Quest document. [intent.md](intent.md) explains *why I chose* this problem over three others. This one is the problem on its own: who it hurts, what the evidence is, and where the edges are.
 
+## Why a Twitter scraper?
+- **It had to be my own code, and it couldn't be my day job.** The brief asks for a repository I own, with no confidential employer material. I work on core digital lending at a bank, and that code, its data and its incidents can't leave the bank. xscraper is mine: public, MIT-licensed, and built before this Quest, which the brief explicitly allows.
+- **It has the same failure modes I deal with at work, at a size that fits one flow.** Batch jobs, an upstream service I don't control, rate limits, retries and partial failure are what performance engineering on a lending platform is about. xscraper has all of them in a few thousand lines. The defect here is a classic one: one bad response from upstream takes down a whole batch.
+- **Its problems are real and already documented.** I didn't plant a bug for the exercise. Two independent reviews on 2026-09-29 had already found and reproduced these defects, so I could compare real problems with real baselines (see [intent.md](intent.md)).
+- **The dependency is honestly hostile.** X's embed endpoints are undocumented and change shape without notice. That makes "what happens when the payload isn't what we expect?" a real engineering question, not a contrived one.
+- **It's safe to run and to share.** The data is public tweets. Every measurement runs against a local mock, and the few live checks used public endpoints at 1 request per second, with no login.
+
 ## The problem in one sentence
 When X's embed endpoint returns a tweet payload the parser doesn't expect, `xscraper tweet` doesn't fail that one tweet. It **crashes the whole batch**, loses every tweet after it, doesn't say which ID caused it, and **dies at the same place on every rerun**.
 
